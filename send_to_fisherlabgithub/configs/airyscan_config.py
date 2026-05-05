@@ -377,3 +377,43 @@ fly_subtype = {
     "fly16": "L6R3",
     "fly17": "L3R6",
 }
+
+
+fly_image_map = {
+    "fly1": ["fly1"],
+    "fly3": ["fly3_left", "fly3_right"],
+    "fly4": ["fly4"],
+    "fly6": ["fly6"],
+    "fly7": ["fly7"],
+    "fly8": ["fly8"],
+    "fly12": ["fly12"],
+    "fly13": ["fly13_left", "fly13_right"],
+    "fly14": ["fly14_left", "fly14_right"],
+    "fly15": ["fly15"],
+    "fly16": ["fly16"],
+    "fly17": ["fly17"],
+}
+
+# These flies have L9 set to 0 before reordering.
+flies_without_L9 = {"fly1", "fly3", "fly8", "fly15"}
+
+split_image_combine_rules = {
+    "fly3": {
+        "first_image": "fly3_left",
+        "second_image": "fly3_right",
+        "first_rows": list(range(1, 8)),    # rows 1-7
+        "second_rows": list(range(8, 19)),  # rows 8-18
+    },
+    "fly13": {
+        "first_image": "fly13_left",
+        "second_image": "fly13_right",
+        "first_rows": list(range(1, 10)),   # rows 1-9
+        "second_rows": list(range(10, 19)), # rows 10-18
+    },
+    "fly14": {
+        "first_image": "fly14_left",
+        "second_image": "fly14_right",
+        "first_rows": list(range(1, 6)),    # rows 1-5
+        "second_rows": list(range(6, 19)),  # rows 6-18
+    },
+}

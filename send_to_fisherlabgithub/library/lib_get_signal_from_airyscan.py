@@ -1654,3 +1654,379 @@ def add_wrapped_row(
 # there are some functions that I didn't bring over from analysis_trend-25summer.ipynb, because they are not needed for the current analysis, but I can always add them back later if needed.
 # those were for example functions for plotting, making a summary df of all flies, and making the graph for that.
 #-----------------end of the "reorder" section-----------------
+
+
+
+
+
+
+
+
+#-------------------------find percentiles--------------------------
+
+def plot_intensity_histograms_with_percentile(
+    red_channel,
+    green_channel,
+    z_ranges,
+    q_by_channel=None,      # <-- NEW
+    bins=1024,
+    exclude_zero=False,
+    use_dtype_range=False
+):
+    """
+    Plot histograms for red and green channels with percentile thresholds.
+
+    Parameters
+    ----------
+    q_by_channel : dict or None
+        Example:
+            {"red": 0.95, "green": 0.98}
+        If None, defaults to {"red": 0.05, "green": 0.05}
+    """
+
+    # ---- handle q input ----
+    if q_by_channel is None:
+        q_by_channel = {"red": 0.05, "green": 0.05}
+
+    q_red = float(q_by_channel["red"])
+    q_green = float(q_by_channel["green"])
+
+    # ---- derive global Z window ----
+    all_z = [int(z) for pair in z_ranges for z in pair]
+    z0_raw, z1_raw = min(all_z), max(all_z)
+
+    Z = int(red_channel.shape[0])
+    z0 = max(0, min(int(z0_raw), Z - 1))
+    z1 = max(0, min(int(z1_raw), Z - 1))
+
+    if z1 < z0:
+        z0, z1 = z1, z0
+
+    print(f"Global Z range (clipped): {z0}..{z1} (from raw {z0_raw}..{z1_raw}, Z={Z})")
+
+    # ---- select and flatten ----
+    red_sel   = red_channel[z0 : z1 + 1].ravel()
+    green_sel = green_channel[z0 : z1 + 1].ravel()
+
+    if exclude_zero:
+        red_sel   = red_sel[red_sel != 0]
+        green_sel = green_sel[green_sel != 0]
+
+    red_sel   = red_sel[np.isfinite(red_sel)]
+    green_sel = green_sel[np.isfinite(green_sel)]
+
+    if red_sel.size == 0 or green_sel.size == 0:
+        raise ValueError("No pixels to analyze after selection.")
+
+    # ---- percentile helper ----
+    def qtile(a, qf):
+        try:
+            return float(np.quantile(a, qf, method="linear"))
+        except TypeError:
+            return float(np.quantile(a, qf, interpolation="linear"))
+
+    thr_red   = qtile(red_sel, q_red)
+    thr_green = qtile(green_sel, q_green)
+
+    frac_red   = float((red_sel   <= thr_red).mean())
+    frac_green = float((green_sel <= thr_green).mean())
+
+    print(f"Red   {q_red*100:.3f}th pct = {thr_red:.6g} | fraction ≤ line: {frac_red*100:.2f}%")
+    print(f"Green {q_green*100:.3f}th pct = {thr_green:.6g} | fraction ≤ line: {frac_green*100:.2f}%")
+
+    # ---- histogram helper ----
+    def make_hist(a, dtype):
+        if use_dtype_range and np.issubdtype(dtype, np.integer):
+            lo, hi = 0, np.iinfo(dtype).max
+        else:
+            lo, hi = float(a.min()), float(a.max())
+
+        counts, edges = np.histogram(a, bins=bins, range=(lo, hi))
+        centers = (edges[:-1] + edges[1:]) / 2.0
+        return counts, edges, centers
+
+    cr, er, xr = make_hist(red_sel,   red_channel.dtype)
+    cg, eg, xg = make_hist(green_sel, green_channel.dtype)
+
+    # ---- plots ----
+    plt.figure()
+    plt.plot(xr, cr, drawstyle="steps-mid")
+    plt.axvline(thr_red, color="red", linestyle="--", linewidth=1.5,
+                label=f"{q_red*100:.1f}th pct = {thr_red:.2f}")
+    plt.fill_between(xr, cr, where=xr <= thr_red, step="mid", alpha=0.2)
+    plt.yscale("log")
+    plt.xlabel("Intensity"); plt.ylabel("Pixel count")
+    plt.title(f"Red histogram (Z={z0}..{z1})")
+    plt.legend(); plt.tight_layout()
+
+    plt.figure()
+    plt.plot(xg, cg, drawstyle="steps-mid")
+    plt.axvline(thr_green, color="green", linestyle="--", linewidth=1.5,
+                label=f"{q_green*100:.1f}th pct = {thr_green:.2f}")
+    plt.fill_between(xg, cg, where=xg <= thr_green, step="mid", alpha=0.2)
+    plt.yscale("log")
+    plt.xlabel("Intensity"); plt.ylabel("Pixel count")
+    plt.title(f"Green histogram (Z={z0}..{z1})")
+    plt.legend(); plt.tight_layout()
+
+    return {
+        "z_range": (z0, z1),
+        "q_by_channel": q_by_channel,
+        "red":   {"threshold": thr_red,   "fraction_leq": frac_red,   "counts": cr, "edges": er},
+        "green": {"threshold": thr_green, "fraction_leq": frac_green, "counts": cg, "edges": eg},
+    }
+
+
+
+
+def plot_percentile_threshold_sweep_by_channel(
+    red_channel,
+    green_channel,
+    z_ranges,
+    q_values_by_channel=None,
+    exclude_zero=False,
+):
+    """
+    Plot percentile-threshold sweeps for red and green channels separately.
+
+    Parameters
+    ----------
+    red_channel, green_channel : ndarray
+        3D arrays with shape (Z, Y, X).
+    z_ranges : list of tuple
+        ROI z-ranges. The min and max z-values define the global z-window.
+    q_values_by_channel : dict, optional
+        Example:
+        {
+            "red": [0.60, 0.65, 0.70, 0.75, 0.80],
+            "green": [0.90, 0.95, 0.99, 0.999],
+        }
+    exclude_zero : bool, default=False
+        Whether to exclude zero-valued pixels.
+
+    Returns
+    -------
+    dict
+        {"red": red_df, "green": green_df}
+    """
+    if q_values_by_channel is None:
+        q_values_by_channel = {
+            "red": [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 0.99],
+            "green": [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 0.99],
+        }
+
+    all_z = [int(z) for pair in z_ranges for z in pair]
+    z0_raw, z1_raw = min(all_z), max(all_z)
+
+    Z = int(red_channel.shape[0])
+    z0 = max(0, min(int(z0_raw), Z - 1))
+    z1 = max(0, min(int(z1_raw), Z - 1))
+
+    if z1 < z0:
+        z0, z1 = z1, z0
+
+    print(f"Global Z range (clipped): {z0}..{z1} (from raw {z0_raw}..{z1_raw}, Z={Z})")
+
+    red_sel = red_channel[z0:z1 + 1].ravel()
+    green_sel = green_channel[z0:z1 + 1].ravel()
+
+    if exclude_zero:
+        red_sel = red_sel[red_sel != 0]
+        green_sel = green_sel[green_sel != 0]
+
+    red_sel = red_sel[np.isfinite(red_sel)]
+    green_sel = green_sel[np.isfinite(green_sel)]
+
+    if red_sel.size == 0 or green_sel.size == 0:
+        raise ValueError("No pixels to analyze after selection.")
+
+    def qtile(a, qf):
+        try:
+            return float(np.quantile(a, qf, method="linear"))
+        except TypeError:
+            return float(np.quantile(a, qf, interpolation="linear"))
+
+    def build_one_channel_df(vals, q_values):
+        rows = []
+        for q in q_values:
+            q = float(q)
+            thr = qtile(vals, q)
+            frac = float((vals <= thr).mean())
+
+            rows.append({
+                "q": q,
+                "q_percent": q * 100,
+                "threshold": thr,
+                "fraction_leq": frac,
+                "fraction_leq_percent": frac * 100,
+            })
+
+        return pd.DataFrame(rows)
+
+    red_df = build_one_channel_df(red_sel, q_values_by_channel["red"])
+    green_df = build_one_channel_df(green_sel, q_values_by_channel["green"])
+
+    plt.figure()
+    plt.plot(red_df["q_percent"], red_df["threshold"], marker="o", linewidth=1)
+    plt.xlabel("Percentile q (%)")
+    plt.ylabel("Red threshold intensity")
+    plt.title(f"Red percentile threshold sweep (Z={z0}..{z1})")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    plt.figure()
+    plt.plot(green_df["q_percent"], green_df["threshold"], marker="o", linewidth=1)
+    plt.xlabel("Percentile q (%)")
+    plt.ylabel("Green threshold intensity")
+    plt.title(f"Green percentile threshold sweep (Z={z0}..{z1})")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    return {
+        "red": red_df,
+        "green": green_df,
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+#-------------------------looping over flies--------------------------
+
+def extract_df_means_for_one_image(
+    image_name,
+    *,
+    images,
+    label_masks,
+    label_masks_checking,
+    z_ranges_by_fly,
+    q_settings,
+    red_idx=1,
+    green_idx=2,
+    blue_idx=0,
+    bg_roi_id=1,
+    exclude_zero=False,
+    round_digits=1,
+):
+    """
+    Run the full numerical extraction for one image and return df_means.
+
+    This function:
+    1. loads the image channels
+    2. loads the ROI mask and background mask
+    3. gets the z-ranges
+    4. computes per-z red/green thresholds
+    5. extracts mean/total red and green signal per ROI
+
+    It does NOT build visual-check masks.
+    """
+
+    # load image channels
+    fly_data = load_fly(
+        image_name,
+        images=images,
+        red_idx=red_idx,
+        green_idx=green_idx,
+        blue_idx=blue_idx,
+    )
+
+    red_channel = fly_data["red_channel"]
+    green_channel = fly_data["green_channel"]
+
+    # load masks
+    mask_data = load_fly_mask(
+        image_name,
+        label_masks=label_masks,
+        label_masks_checking=label_masks_checking,
+        require_masks=True,
+    )
+
+    label_mask = mask_data["label_mask"]
+    label_mask_checking = mask_data["label_mask_checking"]
+
+    # get z-ranges
+    z_ranges = get_z_ranges(
+        image_name,
+        z_ranges_by_fly=z_ranges_by_fly,
+        Z=red_channel.shape[0],
+        clip=False,
+    )
+
+    # compute per-z thresholds
+    df_thresholds = per_slice_percentiles_red_and_green_diff(
+        red_channel=red_channel,
+        green_channel=green_channel,
+        label_mask_checking=label_mask_checking,
+        q=(q_settings["red"], q_settings["green"]),
+        roi_id=bg_roi_id,
+        exclude_zero=exclude_zero,
+    )
+
+    # extract df_means
+    df_means = extract_roi_signal_with_per_z_thresholds(
+        red_channel=red_channel,
+        green_channel=green_channel,
+        label_mask=label_mask,
+        z_ranges=z_ranges,
+        df_thresholds=df_thresholds,
+        round_digits=round_digits,
+    )
+
+    return df_means
+
+
+
+
+def combine_split_image_df_means(
+    df_first,
+    df_second,
+    *,
+    first_rows,
+    second_rows,
+):
+    """
+    Combine two df_means tables from split images into one 18-row df_means table.
+
+    Parameters
+    ----------
+    df_first, df_second : pandas.DataFrame
+        df_means tables from the two split images.
+
+    first_rows : list-like
+        ROI rows to take from df_first.
+
+    second_rows : list-like
+        ROI rows to take from df_second.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Combined 18-row df_means table.
+    """
+
+    df_first = df_first.copy()
+    df_second = df_second.copy()
+
+    pieces = [
+        df_first.loc[list(first_rows)],
+        df_second.loc[list(second_rows)],
+    ]
+
+    df_combined = pd.concat(pieces, axis=0)
+    df_combined = df_combined.sort_index()
+
+    expected_index = list(range(1, 19))
+    if list(df_combined.index) != expected_index:
+        raise ValueError(
+            f"Combined df index should be 1..18, but got {list(df_combined.index)}"
+        )
+
+    return df_combined
