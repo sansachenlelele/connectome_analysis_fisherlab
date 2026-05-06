@@ -1868,6 +1868,261 @@ def plot_line_svg(
 
 
 
+def plot_individual_vs_population_ihc_with_stats(
+    indiv_dict,
+    pop_df,
+    metric="mean",
+    channel="green",
+    line_color=None,
+    *,
+    column=None,
+    stat_comparisons=((4, 0), (4, 3), (0, 3)),
+    stats_df=None,
+    alternative="two-sided",
+    method="exact",
+    show_stats=True,
+    stat_line_height=0.08,
+    stat_text_offset=0.015,
+    stat_fontsize=12,
+    column_label_for_stats=None,
+    figsize=(7, 5),   # ✅ NEW PARAMETER
+    show_legend: bool = True,
+    save_svg: str | Path | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    title: str | None = None,
+    individual_color_mode="same",
+    individual_color="gray",
+    individual_alpha=0.45,
+    individual_linewidth=1,
+):
+    """
+    Plot individual IHC traces + population average, with optional Wilcoxon
+    significance bars/stars between selected x-index positions.
+    """
+
+    if not indiv_dict:
+        raise ValueError("indiv_dict is empty.")
+
+    signal = column if column is not None else f"{metric}_{channel}"
+    signal_avg = f"{signal}_avg"
+
+    if line_color is None:
+        if "green" in signal:
+            line_color = "green"
+        elif "red" in signal:
+            line_color = "red"
+        else:
+            line_color = "tab:blue"
+
+    if signal_avg not in pop_df.columns:
+        raise ValueError(f"pop_df must contain '{signal_avg}'.")
+
+    individual_color_mode = str(individual_color_mode).lower()
+    if individual_color_mode not in {"same", "different"}:
+        raise ValueError("individual_color_mode must be 'same' or 'different'.")
+
+    lengths = [len(df) for df in indiv_dict.values()]
+    lengths.append(len(pop_df))
+    L = min(lengths)
+    x = np.arange(L)
+
+    # ---------------- get stats stars ----------------
+    stat_rows = []
+
+    if show_stats:
+        for idx1, idx2 in stat_comparisons:
+            if stats_df is not None:
+                stats_col = column_label_for_stats if column_label_for_stats is not None else signal
+
+                match = stats_df[
+                    (stats_df["column"] == stats_col)
+                    & (stats_df["idx1"] == idx1)
+                    & (stats_df["idx2"] == idx2)
+                ]
+
+                if match.empty:
+                    match = stats_df[
+                        (stats_df["column"] == stats_col)
+                        & (stats_df["idx1"] == idx2)
+                        & (stats_df["idx2"] == idx1)
+                    ]
+
+                if match.empty:
+                    star = "NA"
+                    p_value = np.nan
+                else:
+                    star_col = "star" if "star" in match.columns else "p_value_summary"
+                    star = match.iloc[0][star_col]
+                    p_value = match.iloc[0]["p_value"] if "p_value" in match.columns else np.nan
+
+            else:
+                res = paired_wilcoxon_from_dfs(
+                    indiv_dict,
+                    column=signal,
+                    idx1=idx1,
+                    idx2=idx2,
+                    label1=f"idx{idx1}",
+                    label2=f"idx{idx2}",
+                    alternative=alternative,
+                    method=method,
+                )
+                star = res["p_value_summary"]
+                p_value = res["p_value"]
+
+            stat_rows.append({
+                "idx1": idx1,
+                "idx2": idx2,
+                "star": star,
+                "p_value": p_value,
+            })
+
+    # ---------------- plot ----------------
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        fig, ax = plt.subplots(figsize=figsize)  # ✅ UPDATED
+
+        if individual_color_mode == "different":
+            color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+        for i, (name, df) in enumerate(indiv_dict.items()):
+            if signal not in df.columns:
+                raise ValueError(f"'{signal}' not found in '{name}'.")
+
+            y = pd.to_numeric(df[signal], errors="coerce").to_numpy()[:L]
+
+            color = (
+                individual_color
+                if individual_color_mode == "same"
+                else color_cycle[i % len(color_cycle)]
+            )
+
+            ax.plot(
+                x,
+                y,
+                linewidth=individual_linewidth,
+                alpha=individual_alpha,
+                color=color,
+            )
+
+        if show_legend:
+            legend_color = individual_color if individual_color_mode == "same" else "gray"
+            ax.plot(
+                [],
+                [],
+                linewidth=individual_linewidth,
+                color=legend_color,
+                alpha=individual_alpha,
+                label=f"individuals ({signal})",
+            )
+
+        y_pop = pd.to_numeric(pop_df[signal_avg], errors="coerce").to_numpy()[:L]
+
+        ax.plot(
+            x,
+            y_pop,
+            linewidth=4,
+            color=line_color,
+            marker="o",
+            label=(f"population ({signal_avg})" if show_legend else None),
+        )
+
+        if "glomerulus" in pop_df.columns:
+            xtick_labels = pop_df["glomerulus"].astype(str).tolist()[:L]
+        else:
+            xtick_labels = [str(i) for i in range(L)]
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(xtick_labels)
+
+        ax.set_xlabel(xlabel if xlabel is not None else "Glomerulus")
+        ax.set_ylabel(ylabel if ylabel is not None else signal.replace("_", " "))
+        ax.set_title(
+            title if title is not None else f"Individuals vs Population (n={len(indiv_dict)})",
+            pad=25,
+        )
+
+        # ---------------- significance bars ----------------
+        if show_stats and stat_rows:
+            all_y = []
+
+            for df in indiv_dict.values():
+                if signal in df.columns:
+                    vals = pd.to_numeric(df[signal], errors="coerce").to_numpy()[:L]
+                    all_y.extend(vals[np.isfinite(vals)])
+
+            pop_vals = y_pop[np.isfinite(y_pop)]
+            all_y.extend(pop_vals)
+
+            y_min = np.nanmin(all_y)
+            y_max = np.nanmax(all_y)
+            y_range = y_max - y_min if y_max > y_min else 1
+
+            base_y = y_max + stat_line_height * y_range
+
+            for k, row in enumerate(stat_rows):
+                idx1 = row["idx1"]
+                idx2 = row["idx2"]
+                star = row["star"]
+
+                x1, x2 = idx1, idx2
+                if x1 > x2:
+                    x1, x2 = x2, x1
+
+                y = base_y + k * stat_line_height * y_range
+                h = 0.025 * y_range
+
+                ax.plot(
+                    [x1, x1, x2, x2],
+                    [y, y + h, y + h, y],
+                    color="black",
+                    linewidth=1,
+                )
+
+                ax.text(
+                    (x1 + x2) / 2,
+                    y + h + stat_text_offset * y_range,
+                    star,
+                    ha="center",
+                    va="bottom",
+                    fontsize=stat_fontsize,
+                )
+
+            ax.set_ylim(
+                y_min,
+                base_y + len(stat_rows) * stat_line_height * y_range + 0.12 * y_range,
+            )
+
+        if show_legend:
+            ax.legend(
+                frameon=False,
+                loc="upper center",
+                bbox_to_anchor=(0.5, 1.12),
+                ncol=2,
+                columnspacing=1.5,
+                handletextpad=0.5,
+                borderaxespad=0.0,
+            )
+            fig.tight_layout(rect=[0, 0, 1, 0.86])
+        else:
+            fig.tight_layout()
+
+        if save_svg is not None:
+            save_svg = Path(save_svg)
+            save_svg.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(
+                save_svg,
+                format="svg",
+                bbox_inches="tight",
+                transparent=True,
+                metadata={"Creator": "plot_individual_vs_population_ihc_with_stats"},
+            )
+
+        plt.show()
+
+
+
+
+
 
 
 
