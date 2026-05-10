@@ -5,6 +5,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 from kylie_lib import syn_specs
+from scipy.optimize import curve_fit
 
 
 def fetch_d7_upstream_per_cell(
@@ -853,3 +854,338 @@ def map_relative_matrix_to_summary_values(
     out = out.applymap(lambda x: value_map.get(x, np.nan))
 
     return out
+
+
+
+
+def map_relative_matrix_to_cosine_bump(
+    relative_matrix: pd.DataFrame,
+    cos_bump_array,
+) -> pd.DataFrame:
+    """
+    Convert a relative-position matrix into a cosine-bump-value matrix.
+
+    Expected relative_matrix values for 8 glomeruli:
+        0, -1, -2, -3, -4, 3, 2, 1
+
+    cos_bump_array should be length 8 and ordered like:
+        [center, one-step, two-step, three-step, opposite,
+         three-step-other-side, two-step-other-side, one-step-other-side]
+
+    For a standard 8-glom cosine bump centered at 0:
+        relative  0  -> cos_bump_array[0]
+        relative -1  -> cos_bump_array[1]
+        relative -2  -> cos_bump_array[2]
+        relative -3  -> cos_bump_array[3]
+        relative -4  -> cos_bump_array[4]
+        relative  3  -> cos_bump_array[5]
+        relative  2  -> cos_bump_array[6]
+        relative  1  -> cos_bump_array[7]
+    """
+
+    cos_bump_array = np.asarray(cos_bump_array, dtype=float)
+
+    if len(cos_bump_array) != 8:
+        raise ValueError(f"Expected cos_bump_array to have length 8, got {len(cos_bump_array)}.")
+
+    relative_to_bump = {
+        0: cos_bump_array[0],
+        -1: cos_bump_array[1],
+        -2: cos_bump_array[2],
+        -3: cos_bump_array[3],
+        -4: cos_bump_array[4],
+        3: cos_bump_array[5],
+        2: cos_bump_array[6],
+        1: cos_bump_array[7],
+    }
+
+    out = relative_matrix.copy()
+
+    out = out.applymap(lambda x: relative_to_bump.get(int(x), np.nan))
+
+    return out
+
+
+
+
+def roll_matrix_columns_to_center_zero(
+    input_matrix: pd.DataFrame,
+    relative_matrix: pd.DataFrame,
+    *,
+    center_idx: int | None = None,
+    zero_value=0,
+) -> pd.DataFrame:
+    """
+    For each column, circularly roll rows so that the row where
+    relative_matrix == zero_value is moved to center_idx.
+
+    The roll order is determined from relative_matrix, then applied to input_matrix.
+
+    Parameters
+    ----------
+    input_matrix : pd.DataFrame
+        Matrix to roll, e.g. d7_result_bump_summary.
+
+    relative_matrix : pd.DataFrame
+        Matrix with same shape/index/columns as input_matrix.
+        Used to locate zero positions in each column.
+
+    center_idx : int or None
+        Target row index. If None, uses len(input_matrix)//2.
+
+    zero_value : number
+        Value in relative_matrix used as center marker. Default 0.
+
+    Returns
+    -------
+    pd.DataFrame
+        Rolled matrix with same columns as input_matrix.
+        Row index is reset to integer positions because each column may be
+        rolled differently.
+    """
+
+    if input_matrix.shape != relative_matrix.shape:
+        raise ValueError(
+            f"Shape mismatch: input_matrix {input_matrix.shape}, "
+            f"relative_matrix {relative_matrix.shape}"
+        )
+
+    if not input_matrix.columns.equals(relative_matrix.columns):
+        raise ValueError("input_matrix and relative_matrix must have same columns.")
+
+    if not input_matrix.index.equals(relative_matrix.index):
+        raise ValueError("input_matrix and relative_matrix must have same index.")
+
+    n_rows = len(input_matrix)
+
+    if center_idx is None:
+        center_idx = n_rows // 2
+
+    rolled_cols = {}
+
+    for col in input_matrix.columns:
+        rel_col = relative_matrix[col].to_numpy()
+
+        zero_positions = np.where(rel_col == zero_value)[0]
+
+        if len(zero_positions) == 0:
+            raise ValueError(f"No zero_value={zero_value!r} found in column {col!r}.")
+
+        # choose middle zero if multiple zero rows exist
+        chosen_zero_pos = zero_positions[len(zero_positions) // 2]
+
+        shift = center_idx - chosen_zero_pos
+
+        rolled_cols[col] = np.roll(
+            input_matrix[col].to_numpy(),
+            shift,
+        )
+
+    out = pd.DataFrame(
+        rolled_cols,
+        index=np.arange(n_rows),
+        columns=input_matrix.columns,
+    )
+
+    return out
+
+
+
+
+# cosine fit + group by left glomerulus
+
+def group_rowmean_by_left_glomerulus(
+    rowmean_df: pd.DataFrame,
+    labels,
+    *,
+    value_col: str = "row_mean",
+) -> pd.DataFrame:
+    """
+    Group 42 row-mean values into 8 left-glomerulus groups.
+
+    labels should be in the same order as rowmean_df rows.
+    Example label: '911911004_L1L9R8_R' -> group '1'
+    """
+
+    y = pd.to_numeric(rowmean_df[value_col], errors="coerce").to_numpy(dtype=float)
+    labels = list(labels)
+
+    if len(y) != len(labels):
+        raise ValueError(
+            f"rowmean_df has {len(y)} values, but labels has {len(labels)} values."
+        )
+
+    rows = []
+
+    for i, (label, value) in enumerate(zip(labels, y)):
+        glom = str(label).split("_", 1)[1][:2]   # e.g. L1
+        group = int(glom[1])                     # e.g. 1
+
+        rows.append(
+            {
+                "raw_idx": i,
+                "label": label,
+                "left_glomerulus": group,
+                value_col: value,
+            }
+        )
+
+    long_df = pd.DataFrame(rows)
+
+    grouped = (
+        long_df
+        .groupby("left_glomerulus", sort=True)
+        .agg(
+            n_cells=("raw_idx", "count"),
+            raw_indices=("raw_idx", lambda x: list(x)),
+            x_center=("raw_idx", "mean"),
+            bump_sum=(value_col, "sum"),
+            bump_mean=(value_col, "mean"),
+        )
+        .reset_index()
+    )
+
+    return grouped
+
+
+
+def cosine_fixed_amp_offset(x, phi, A, B, T=8):
+    """
+    Cosine with fixed amplitude, offset, and period.
+    Only phi is fit.
+    """
+    return A * np.cos(2 * np.pi / T * (x - phi)) + B
+
+
+def fit_8point_cosine_phase_only(
+    grouped_bump_df: pd.DataFrame,
+    *,
+    x_col: str = "left_glomerulus",
+    y_col: str = "bump_mean",
+    T: float = 8,
+) -> dict:
+    """
+    Fit an 8-point cosine by fitting only phi.
+
+    A = (max - min) / 2
+    B = (max + min) / 2
+    T is fixed.
+    """
+
+    x = pd.to_numeric(grouped_bump_df[x_col], errors="coerce").to_numpy(dtype=float)
+    y = pd.to_numeric(grouped_bump_df[y_col], errors="coerce").to_numpy(dtype=float)
+
+    # fixed amplitude + offset
+    A = (np.nanmax(y) - np.nanmin(y)) / 2
+    B = (np.nanmax(y) + np.nanmin(y)) / 2
+
+    def model_for_fit(x, phi):
+        return cosine_fixed_amp_offset(x, phi, A=A, B=B, T=T)
+
+    popt, pcov = curve_fit(
+        model_for_fit,
+        x,
+        y,
+        p0=[4.5],
+        maxfev=10000,
+    )
+
+    phi = float(popt[0])
+
+    y_fit = model_for_fit(x, phi)
+
+    # ---------------- goodness of fit ----------------
+
+    residuals = y - y_fit
+
+    ss_res = np.sum(residuals**2)
+    ss_tot = np.sum((y - np.mean(y))**2)
+
+    r2 = 1 - (ss_res / ss_tot)
+
+    rmse = np.sqrt(np.mean(residuals**2))
+
+    return {
+        "x": x,
+        "y": y,
+        "A": float(A),
+        "B": float(B),
+        "T": float(T),
+        "phi": phi,
+        "y_fit": y_fit,
+        "residuals": residuals,
+        "R2": float(r2),
+        "RMSE": float(rmse),
+        "popt": popt,
+        "pcov": pcov,
+    }
+
+
+
+def plot_raw_grouped_and_cosine_fit(
+    rowmean_df: pd.DataFrame,
+    grouped_bump_df: pd.DataFrame,
+    fit_result: dict,
+    *,
+    value_col: str = "row_mean",
+    title: str = "Raw, grouped, and cosine fit",
+    xlabel: str = "Rolled row index",
+    ylabel: str = "Mean value",
+    raw_color: str = "gray",
+    grouped_color: str = "black",
+    fit_color: str = "tab:red",
+    raw_alpha: float = 0.5,
+    raw_marker: str = "o",
+    grouped_marker: str = "o",
+    fit_linewidth: float = 3,
+    figsize=(9, 4),
+):
+    """
+    Plot:
+    1. 42-point raw rowmean curve
+    2. 8 grouped means, stretched onto raw x-axis
+    3. cosine fit, stretched onto raw x-axis
+    """
+
+    raw_y = pd.to_numeric(rowmean_df[value_col], errors="coerce").to_numpy(dtype=float)
+    raw_x = np.arange(len(raw_y))
+
+    group_x = grouped_bump_df["x_center"].to_numpy(dtype=float)
+    group_y = grouped_bump_df["bump_mean"].to_numpy(dtype=float)
+
+    fit_y = np.asarray(fit_result["y_fit"], dtype=float)
+
+    plt.figure(figsize=figsize)
+
+    plt.plot(
+        raw_x,
+        raw_y,
+        marker=raw_marker,
+        color=raw_color,
+        alpha=raw_alpha,
+        label="42 raw points",
+    )
+
+    plt.plot(
+        group_x,
+        group_y,
+        marker=grouped_marker,
+        color=grouped_color,
+        linewidth=2,
+        label="8 grouped means",
+    )
+
+    plt.plot(
+        group_x,
+        fit_y,
+        color=fit_color,
+        linewidth=fit_linewidth,
+        label="cosine fit",
+    )
+
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.legend(frameon=False)
+    plt.tight_layout()
+    plt.show()
