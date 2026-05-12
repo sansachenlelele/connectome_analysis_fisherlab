@@ -372,6 +372,8 @@ def plot_individual_and_mean_axon_dendrite_bumps(
     individual_df: pd.DataFrame,
     sum_df: pd.DataFrame,
     *,
+    sum_source: str | None = None,
+    source_col: str = "source",
     axon_color: str = "tab:blue",
     dendrite_color: str = "purple",
     individual_alpha: float = 0.25,
@@ -385,14 +387,18 @@ def plot_individual_and_mean_axon_dendrite_bumps(
     save_svg: str | Path | None = None,
 ):
     """
-    Plot individual axon/dendrite bump curves plus mean curves.
+    Plot individual axon/dendrite bump curves plus selected mean curves.
 
     individual_df:
-        each row gives one axon curve and one dendrite curve.
+        Each row gives one axon curve and one dendrite curve.
 
     sum_df:
-        one-row summary df containing summed axon/dendrite columns.
-        Values are divided by n_rows of individual_df before plotting.
+        Summary df containing summed axon/dendrite columns.
+        If sum_df has more than one row, use sum_source to choose which row.
+
+    sum_source:
+        Value in source_col identifying which row of sum_df to use for the mean.
+        If None, sum_df must have exactly one row.
     """
 
     suffixes = [
@@ -417,8 +423,27 @@ def plot_individual_and_mean_axon_dendrite_bumps(
     if missing_sum:
         raise ValueError(f"Missing columns in sum_df: {missing_sum}")
 
-    if len(sum_df) != 1:
-        raise ValueError(f"Expected sum_df to have exactly one row, got {len(sum_df)}.")
+    if sum_source is not None:
+        if source_col not in sum_df.columns:
+            raise ValueError(f"sum_df must contain source_col={source_col!r}.")
+
+        matched = sum_df[sum_df[source_col] == sum_source]
+
+        if len(matched) != 1:
+            raise ValueError(
+                f"Expected exactly one row where {source_col} == {sum_source!r}, "
+                f"but found {len(matched)}."
+            )
+
+        sum_row = matched.iloc[0]
+
+    else:
+        if len(sum_df) != 1:
+            raise ValueError(
+                "sum_df has more than one row, so you must provide sum_source."
+            )
+
+        sum_row = sum_df.iloc[0]
 
     n = len(individual_df)
     if n == 0:
@@ -430,13 +455,13 @@ def plot_individual_and_mean_axon_dendrite_bumps(
     dendrite_indiv = individual_df[dendrite_cols].apply(pd.to_numeric, errors="coerce")
 
     axon_mean = (
-        pd.to_numeric(sum_df.iloc[0][axon_cols], errors="coerce")
+        pd.to_numeric(sum_row[axon_cols], errors="coerce")
         .to_numpy(dtype=float)
         / n
     )
 
     dendrite_mean = (
-        pd.to_numeric(sum_df.iloc[0][dendrite_cols], errors="coerce")
+        pd.to_numeric(sum_row[dendrite_cols], errors="coerce")
         .to_numpy(dtype=float)
         / n
     )
@@ -631,6 +656,67 @@ def build_multiplied_bump_summary(
     out = out[["source"] + bump_cols]
 
     return out
+
+
+
+
+def apply_glucl_scaling_to_individual_bumps(
+    df: pd.DataFrame,
+    glucl_scaling_values: dict,
+    *,
+    axon_key: str,
+    dendrite_key: str,
+) -> pd.DataFrame:
+    """
+    Apply GluCl scaling to individual Delta7 bump table.
+
+    Axon scaling is applied to:
+    - axonal_input
+    - columns starting with 'axon'
+
+    Dendrite scaling is applied to:
+    - dendritic_input
+    - columns starting with 'dendrite' or 'dendritic'
+    """
+
+    out = df.copy()
+
+    axon_scale = glucl_scaling_values[axon_key]
+    dendrite_scale = glucl_scaling_values[dendrite_key]
+
+    axon_cols = [
+        c for c in out.columns
+        if c == "axonal_input" or c.startswith("axon_")
+    ]
+
+    dendrite_cols = [
+        c for c in out.columns
+        if c == "dendritic_input"
+        or c.startswith("dendrite_")
+        or c.startswith("dendritic_")
+    ]
+
+    for c in axon_cols:
+        out[c] = pd.to_numeric(out[c], errors="coerce") * axon_scale
+
+    for c in dendrite_cols:
+        out[c] = pd.to_numeric(out[c], errors="coerce") * dendrite_scale
+
+    return out
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
