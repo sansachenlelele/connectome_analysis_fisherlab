@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 from kylie_lib import syn_specs
 from scipy.optimize import curve_fit
@@ -1275,3 +1276,509 @@ def plot_raw_grouped_and_cosine_fit(
     plt.legend(frameon=False)
     plt.tight_layout()
     plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# YF part
+
+
+def plot_matrix_heatmap(
+    matrix: pd.DataFrame,
+    *,
+    cmap: str = "coolwarm",
+    center=None,
+    square: bool = True,
+    figsize=(8, 6),
+    xlabel: str = "Columns",
+    ylabel: str = "Rows",
+    title: str | None = None,
+    vmin=None,
+    vmax=None,
+    show_xticklabels: bool = True,
+    show_yticklabels: bool = True,
+    xtick_fontsize: float = 8,
+    ytick_fontsize: float = 8,
+    save_svg: str | Path | None = None,
+):
+    """
+    Plot a heatmap for a matrix/DataFrame.
+    """
+
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        plt.figure(figsize=figsize)
+
+        ax = sns.heatmap(
+            matrix,
+            cmap=cmap,
+            center=center,
+            square=square,
+            vmin=vmin,
+            vmax=vmax,
+            xticklabels=show_xticklabels,
+            yticklabels=show_yticklabels,
+        )
+        
+        ax.tick_params(axis="x", labelsize=xtick_fontsize)
+        ax.tick_params(axis="y", labelsize=ytick_fontsize)
+
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+
+        if title:
+            plt.title(title)
+
+        plt.tight_layout()
+
+        if save_svg is not None:
+            save_svg = Path(save_svg)
+            save_svg.parent.mkdir(parents=True, exist_ok=True)
+
+            plt.savefig(
+                save_svg,
+                format="svg",
+                bbox_inches="tight",
+                transparent=True,
+                metadata={
+                    "Creator": "plot_matrix_heatmap"
+                },
+            )
+
+        plt.show()
+
+
+
+
+
+def project_inhibition_onto_bump_columns(
+    inhibition_matrix: pd.DataFrame,
+    bump_matrix_colcondensed: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    For each column in inhibition_matrix:
+    - multiply it elementwise with each column in bump_matrix_colcondensed
+    - sum the multiplied values
+    - store the 8 sums as one row
+
+    Rows of output = columns of inhibition_matrix.
+    Columns of output = = bump_matrix_colcondensed column names, e.g. L1, L2, ..., L8.
+    """
+
+    if len(inhibition_matrix) != len(bump_matrix_colcondensed):
+        raise ValueError(
+            f"Row count mismatch: inhibition_matrix has {len(inhibition_matrix)} rows, "
+            f"bump_matrix_colcondensed has {len(bump_matrix_colcondensed)} rows."
+        )
+
+    out_rows = []
+
+    for inhib_col in inhibition_matrix.columns:
+        inhib_values = pd.to_numeric(
+            inhibition_matrix[inhib_col],
+            errors="coerce",
+        ).to_numpy(dtype=float)
+
+        row_data = {}
+
+        for bump_col in bump_matrix_colcondensed.columns:
+            bump_values = pd.to_numeric(
+                bump_matrix_colcondensed[bump_col],
+                errors="coerce",
+            ).to_numpy(dtype=float)
+
+            row_data[bump_col] = np.nansum(
+                inhib_values * bump_values
+            )
+
+        row_data["source"] = inhib_col
+        out_rows.append(row_data)
+
+    out = pd.DataFrame(out_rows)
+    out = out.set_index("source")
+
+    return out
+
+
+
+def roll_each_row_to_center_glomerulus(
+    df: pd.DataFrame,
+    *,
+    target_idx: int = 4,
+) -> pd.DataFrame:
+    """
+    For each row, extract the first 2 characters after the first underscore
+    from the row name, then circularly roll that row's values so that the
+    matching column lands at target_idx.
+
+    Example:
+    row name '911911004_L1L9R8_R' -> center column 'L1'
+    """
+
+    out_rows = []
+
+    columns = list(df.columns)
+
+    for row_name, row in df.iterrows():
+        center_glom = str(row_name).split("_", 1)[1][:2]
+
+        if center_glom not in columns:
+            raise ValueError(
+                f"Center glomerulus {center_glom!r} from row {row_name!r} "
+                f"not found in df columns."
+            )
+
+        current_idx = columns.index(center_glom)
+        shift = target_idx - current_idx
+
+        rolled_values = np.roll(
+            pd.to_numeric(row, errors="coerce").to_numpy(dtype=float),
+            shift,
+        )
+
+        out_rows.append(rolled_values)
+    
+    relative_cols = [-4, -3, -2, -1, 0, 1, 2, 3]
+    out = pd.DataFrame(
+        out_rows,
+        index=df.index,
+        columns=relative_cols,
+    )
+
+    return out
+
+
+
+def plot_each_row_as_line(
+    df: pd.DataFrame,
+    *,
+    figsize=(7, 5),
+    color="tab:blue",
+    alpha: float = 0.3,
+    linewidth: float = 1,
+    mean_color: str | None = "black",
+    mean_linewidth: float = 3,
+    marker: str | None = None,
+    xlabel: str = "Column",
+    ylabel: str = "Value",
+    title: str | None = None,
+    show_legend: bool = False,
+    save_svg: str | Path | None = None,
+):
+    """
+    Plot each row of a DataFrame as one line.
+
+    Assumes:
+    - rows = observations
+    - columns = ordered x positions
+    """
+
+    plot_df = df.apply(pd.to_numeric, errors="coerce")
+
+    x = np.arange(len(plot_df.columns))
+
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # individual rows
+        for idx, row in plot_df.iterrows():
+
+            ax.plot(
+                x,
+                row.to_numpy(dtype=float),
+                color=color,
+                alpha=alpha,
+                linewidth=linewidth,
+                marker=marker,
+                label=str(idx) if show_legend else None,
+            )
+
+        # mean line
+        if mean_color is not None:
+
+            mean_vals = plot_df.mean(axis=0).to_numpy(dtype=float)
+
+            ax.plot(
+                x,
+                mean_vals,
+                color=mean_color,
+                linewidth=mean_linewidth,
+                marker=marker,
+                label="mean",
+            )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(plot_df.columns)
+
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+
+        if title:
+            ax.set_title(title)
+
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        if show_legend or mean_color is not None:
+            ax.legend(frameon=False)
+
+        fig.tight_layout()
+
+        if save_svg is not None:
+            save_svg = Path(save_svg)
+            save_svg.parent.mkdir(parents=True, exist_ok=True)
+
+            fig.savefig(
+                save_svg,
+                format="svg",
+                bbox_inches="tight",
+                transparent=True,
+                metadata={
+                    "Creator": "plot_each_row_as_line"
+                },
+            )
+
+        plt.show()
+
+
+
+
+def plot_two_dfs_each_row_as_line(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    *,
+    df1_color: str = "tab:blue",
+    df2_color: str = "purple",
+    df1_label: str = "df1 mean",
+    df2_label: str = "df2 mean",
+    alpha: float = 0.25,
+    linewidth: float = 1,
+    mean_linewidth: float = 4,
+    marker: str | None = None,
+    figsize=(7, 5),
+    xlabel: str = "Position",
+    ylabel: str = "Value",
+    title: str | None = None,
+    save_svg: str | Path | None = None,
+):
+    """
+    Plot all rows from two DataFrames as lines on the same plot.
+
+    - all rows from df1 plotted in one color
+    - all rows from df2 plotted in another color
+    - mean line for each df also plotted
+    """
+
+    if not df1.columns.equals(df2.columns):
+        raise ValueError("df1 and df2 must have identical columns.")
+
+    plot_df1 = df1.apply(pd.to_numeric, errors="coerce")
+    plot_df2 = df2.apply(pd.to_numeric, errors="coerce")
+
+    x = np.arange(len(plot_df1.columns))
+
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # ---------------- df1 individual ----------------
+
+        for _, row in plot_df1.iterrows():
+
+            ax.plot(
+                x,
+                row.to_numpy(dtype=float),
+                color=df1_color,
+                alpha=alpha,
+                linewidth=linewidth,
+            )
+
+        # ---------------- df2 individual ----------------
+
+        for _, row in plot_df2.iterrows():
+
+            ax.plot(
+                x,
+                row.to_numpy(dtype=float),
+                color=df2_color,
+                alpha=alpha,
+                linewidth=linewidth,
+            )
+
+        # ---------------- mean lines ----------------
+
+        df1_mean = plot_df1.mean(axis=0).to_numpy(dtype=float)
+        df2_mean = plot_df2.mean(axis=0).to_numpy(dtype=float)
+
+        ax.plot(
+            x,
+            df1_mean,
+            color=df1_color,
+            linewidth=mean_linewidth,
+            marker=marker,
+            label=df1_label,
+        )
+
+        ax.plot(
+            x,
+            df2_mean,
+            color=df2_color,
+            linewidth=mean_linewidth,
+            marker=marker,
+            label=df2_label,
+        )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(plot_df1.columns)
+
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+
+        if title:
+            ax.set_title(title)
+
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        ax.legend(frameon=False)
+
+        fig.tight_layout()
+
+        if save_svg is not None:
+            save_svg = Path(save_svg)
+            save_svg.parent.mkdir(parents=True, exist_ok=True)
+
+            fig.savefig(
+                save_svg,
+                format="svg",
+                bbox_inches="tight",
+                transparent=True,
+                metadata={
+                    "Creator": "plot_two_dfs_each_row_as_line"
+                },
+            )
+
+        plt.show()
+
+
+
+
+
+
+
+def plot_each_cell_two_lines(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    *,
+    df1_color: str = "tab:blue",
+    df2_color: str = "purple",
+    df1_label: str = "axon",
+    df2_label: str = "dendrite",
+    linewidth: float = 2,
+    marker: str | None = "o",
+    figsize=(5, 4),
+    xlabel: str = "Position",
+    ylabel: str = "Value",
+    title_prefix: str = "",
+    save_dir: str | Path | None = None,
+    show_plots: bool = True,
+):
+    """
+    For each matched row/cell in df1 and df2, make one plot with two lines.
+    All plots use the same y-axis range based on the global min/max across both dfs.
+    """
+
+    if not df1.columns.equals(df2.columns):
+        raise ValueError("df1 and df2 must have identical columns.")
+
+    if not df1.index.equals(df2.index):
+        raise ValueError("df1 and df2 must have identical row index/cell names.")
+
+    x = np.arange(len(df1.columns))
+
+    df1_num = df1.apply(pd.to_numeric, errors="coerce")
+    df2_num = df2.apply(pd.to_numeric, errors="coerce")
+
+    all_vals = np.concatenate([
+        df1_num.to_numpy().ravel(),
+        df2_num.to_numpy().ravel(),
+    ])
+
+    global_ymin = np.nanmin(all_vals)
+    global_ymax = np.nanmax(all_vals)
+
+    if save_dir is not None:
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+    for cell_name in df1.index:
+        y1 = df1_num.loc[cell_name].to_numpy(dtype=float)
+        y2 = df2_num.loc[cell_name].to_numpy(dtype=float)
+
+        with mpl.rc_context({"svg.fonttype": "none"}):
+            fig, ax = plt.subplots(figsize=figsize)
+
+            ax.plot(
+                x,
+                y1,
+                color=df1_color,
+                linewidth=linewidth,
+                marker=marker,
+                label=df1_label,
+            )
+
+            ax.plot(
+                x,
+                y2,
+                color=df2_color,
+                linewidth=linewidth,
+                marker=marker,
+                label=df2_label,
+            )
+
+            ax.set_ylim(global_ymin, global_ymax)
+
+            #yticks = np.linspace(global_ymin, global_ymax, 5)
+            #ax.set_yticks(yticks)
+
+            ax.set_xticks(x)
+            ax.set_xticklabels(df1.columns)
+
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(ylabel)
+
+            title = f"{title_prefix}{cell_name}" if title_prefix else str(cell_name)
+            ax.set_title(title)
+
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+
+            ax.legend(frameon=False)
+            fig.tight_layout()
+
+            if save_dir is not None:
+                safe_name = str(cell_name).replace("/", "_").replace(" ", "_")
+                fig.savefig(
+                    save_dir / f"{safe_name}.svg",
+                    format="svg",
+                    bbox_inches="tight",
+                    transparent=True,
+                )
+
+            if show_plots:
+                plt.show()
+            else:
+                plt.close(fig)
