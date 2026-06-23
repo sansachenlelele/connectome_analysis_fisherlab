@@ -150,6 +150,93 @@ def fetch_d7_upstream_by_glomerulus(
     return all_results
 
 
+def fetch_d7_upstream_by_neuron_type(
+    d7_names_df: pd.DataFrame,
+    *,
+    output_dir: str | Path | None = None,
+    rois="PB",
+    include_nonprimary: bool = False,
+) -> dict[str, pd.DataFrame]:
+    """
+    For each Delta7 neuron, fetch all upstream inputs and summarize synapse count
+    by presynaptic neuron type.
+
+    Uses Kylie library function:
+        fetch_connectivity(
+            target_scale="neuron",
+            conn_scale="all",
+            conn_type="pre",
+            target_id=<Delta7 bodyId>,
+            rois=<rois>,
+            include_nonprimary=<include_nonprimary>,
+        )
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        One DataFrame per Delta7 neuron.
+    """
+
+    from kylie_lib import fetch_connectivity
+
+    all_results = {}
+
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    for _, row in d7_names_df.iterrows():
+        neuron_id = int(row["id"])
+        inst_name = row["instance"]
+
+        print(f"Fetching upstream types for Delta7 {neuron_id} ({inst_name})...")
+
+        conn_df = fetch_connectivity(
+            target_scale="neuron",
+            conn_scale="all",
+            conn_type="pre",
+            target_id=neuron_id,
+            conn_id=None,
+            rois=rois,
+            include_nonprimary=include_nonprimary,
+        )
+
+        if conn_df is None or len(conn_df) == 0:
+            summary_df = pd.DataFrame(
+                columns=[
+                    "target_id",
+                    "target_instance",
+                    "upstream_type",
+                    "synapse_count",
+                    "n_upstream_cells",
+                ]
+            )
+        else:
+            summary_df = (
+                conn_df
+                .groupby("type_pre", dropna=False)
+                .agg(
+                    synapse_count=("weight", "sum"),
+                    n_upstream_cells=("bodyId_pre", "nunique"),
+                )
+                .reset_index()
+                .rename(columns={"type_pre": "upstream_type"})
+                .sort_values("synapse_count", ascending=False)
+                .reset_index(drop=True)
+            )
+
+            summary_df.insert(0, "target_instance", inst_name)
+            summary_df.insert(0, "target_id", neuron_id)
+
+        result_name = f"delta7_{neuron_id}_{inst_name}_upstream_by_type"
+        all_results[result_name] = summary_df
+
+        if output_dir is not None:
+            summary_df.to_csv(output_dir / f"{result_name}.csv", index=False)
+
+    return all_results
+
+
 
 
 
@@ -573,6 +660,67 @@ def make_add1row_versions(
     return out
 
 
+# new function for "2 halves into one full PB"
+def make_add1row_versions_for_combined_halves(
+    dfs: Dict[str, pd.DataFrame],
+    *,
+    first_half_start_idx: int = 0,
+    second_half_start_idx: int = 8,
+    glomerulus_col: str = "Glomerulus",
+    added_label: str = "added",
+) -> Dict[str, pd.DataFrame]:
+    """
+    Add one duplicated row to the end of each half in a DataFrame that contains
+    two PB halves stacked together.
+
+    Assumes each input DataFrame is arranged as:
+        old rows 0-7  = first half
+        old rows 8-15 = second half
+
+    This function:
+    - duplicates old row 0 and inserts it after old row 7
+    - duplicates old row 8 and appends it after old row 15
+
+    So each DataFrame goes from 16 rows to 18 rows.
+    """
+    out = {}
+
+    for name, df in dfs.items():
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            continue
+
+        base = df.reset_index(drop=True).copy()
+
+        if len(base) <= second_half_start_idx:
+            raise ValueError(
+                f"DataFrame '{name}' has only {len(base)} rows, "
+                f"but second_half_start_idx={second_half_start_idx}."
+            )
+
+        first_added = base.iloc[[first_half_start_idx]].copy()
+        second_added = base.iloc[[second_half_start_idx]].copy()
+
+        if glomerulus_col in base.columns:
+            first_added.loc[:, glomerulus_col] = added_label
+            second_added.loc[:, glomerulus_col] = added_label
+
+        first_half = base.iloc[:second_half_start_idx].copy()
+        second_half = base.iloc[second_half_start_idx:].copy()
+
+        df_new = pd.concat(
+            [
+                first_half,
+                first_added,
+                second_half,
+                second_added,
+            ],
+            ignore_index=True,
+        )
+
+        out[name] = df_new
+
+    return out
+
 
 def sum_and_mean_synapse_counts(
     dfs_dict: dict[str, pd.DataFrame],
@@ -693,6 +841,87 @@ def sum_and_mean_synapse_counts(
 
     return out
 
+
+# new for "2 halves to one full PB"
+def sum_and_mean_synapse_counts_combined_halves(
+    dfs_dict: dict[str, pd.DataFrame],
+    column: str = "SynapseCount",
+) -> pd.DataFrame:
+    """
+    Sum and average row-wise synapse-count values across DataFrames that contain
+    two 9-row circular PB halves stacked together.
+
+    Assumes each DataFrame has 18 rows:
+        rows 0-8   = first half, with duplicated closing row
+        rows 9-17  = second half, with duplicated closing row
+    """
+
+    if not dfs_dict:
+        raise ValueError("Input dictionary is empty.")
+
+    perc_col = f"percentage_{column}"
+
+    series_main = []
+    series_perc = []
+    nrows = None
+
+    for name, df in dfs_dict.items():
+        if column not in df.columns:
+            raise ValueError(f"'{column}' not found in DataFrame '{name}'.")
+
+        if perc_col not in df.columns:
+            raise ValueError(f"'{perc_col}' not found in DataFrame '{name}'.")
+
+        s_main = pd.to_numeric(df[column], errors="coerce").reset_index(drop=True)
+        s_perc = pd.to_numeric(df[perc_col], errors="coerce").reset_index(drop=True)
+
+        if nrows is None:
+            nrows = len(s_main)
+        elif len(s_main) != nrows:
+            raise ValueError(
+                f"Row count mismatch in '{name}': expected {nrows}, got {len(s_main)}"
+            )
+
+        series_main.append(s_main)
+        series_perc.append(s_perc)
+
+    mat_main = pd.concat(series_main, axis=1)
+    mat_perc = pd.concat(series_perc, axis=1)
+
+    sum_main = mat_main.sum(axis=1, skipna=True)
+    mean_main = mat_main.mean(axis=1, skipna=True)
+
+    sum_perc = mat_perc.sum(axis=1, skipna=True)
+    mean_perc = mat_perc.mean(axis=1, skipna=True)
+
+    if nrows == 18:
+        glomerulus = list(range(0, 9)) + list(range(0, 9))
+        half = ["half1"] * 9 + ["half2"] * 9
+    else:
+        glomerulus = list(range(nrows))
+        half = ["combined"] * nrows
+
+    out = pd.DataFrame(
+        {
+            "half": half,
+            "glomerulus": glomerulus,
+            column: sum_main.values,
+            f"{column}_mean": mean_main.values,
+            perc_col: sum_perc.values,
+            f"{perc_col}_mean": mean_perc.values,
+        }
+    )
+
+    s = pd.to_numeric(out[column], errors="coerce")
+    m = s.max(skipna=True)
+
+    out["percentage_SynapseCount_mean_NEW"] = np.where(
+        np.isfinite(m) & (m != 0),
+        s / m,
+        0.0,
+    ).astype(float)
+
+    return out
 
 '''
 # # an old plot_individual_vs_population_connectome that doesn't support the save svg function.
@@ -874,7 +1103,6 @@ def plot_individual_vs_population_connectome(
 
 
 
-
 #-------------------------PART TWO (and THREE)-------------------------
 
 def add_pct_of_max_channels(
@@ -934,6 +1162,67 @@ def add_pct_of_max_channels(
 
     return out
 
+
+# for "2 halves to one full PB"
+def combine_rotated_halves_by_cell(
+    dfs_dict: dict[str, pd.DataFrame],
+    *,
+    center_idx: int = 4,
+) -> dict[str, pd.DataFrame]:
+    """
+    For half-dataframes named like:
+
+        fly12_L
+        fly12_R
+
+    1. rotate each dataframe so center_idx becomes row 0
+    2. combine L and R halves from the same fly
+       (L first, then R)
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        Keys are fly names (e.g. fly12)
+    """
+
+    # rotate
+    rotated = {}
+
+    for name, df in dfs_dict.items():
+        df_rot = (
+            df.iloc[np.roll(np.arange(len(df)), -center_idx)]
+              .reset_index(drop=True)
+        )
+        rotated[name] = df_rot
+
+    # combine
+    combined = {}
+
+    fly_names = sorted({
+        name.rsplit("_", 1)[0]
+        for name in rotated
+    })
+
+    for fly_name in fly_names:
+
+        left_name = f"{fly_name}_L"
+        right_name = f"{fly_name}_R"
+
+        if left_name not in rotated:
+            raise ValueError(f"Missing {left_name}")
+
+        if right_name not in rotated:
+            raise ValueError(f"Missing {right_name}")
+
+        combined[fly_name] = pd.concat(
+            [
+                rotated[left_name],
+                rotated[right_name],
+            ],
+            ignore_index=True,
+        )
+
+    return combined
 
 
 def add_comparison_columns_to_halves(
@@ -2732,6 +3021,10 @@ def plot_paired_index_comparison_svg(
     line_width: float = 2,
     mean_line_width: float = 3,
     mean_bar_width: float = 0.18,
+    show_sem: bool = False,
+    sem_line_width: float = 3,
+    sem_cap_width: float = 0.08,
+    mean_x_offset: float = 0.12,
 
     # --- significance bar ---
     bracket_y: float | None = None,
@@ -2743,6 +3036,7 @@ def plot_paired_index_comparison_svg(
     axis_linewidth: float = 3,
     tick_width: float = 3,
     tick_length: float = 8,
+    y_ticks=None,
 
     # --- fonts ---
     title_fontsize: float = 28,
@@ -2812,6 +3106,7 @@ def plot_paired_index_comparison_svg(
         ax.scatter(x2 + jitter_vals, paired_df["v2"], color=point_color, s=point_size, zorder=2)
 
         # --- mean bars ---
+        '''
         if show_mean:
             m1 = paired_df["v1"].mean()
             m2 = paired_df["v2"].mean()
@@ -2821,6 +3116,60 @@ def plot_paired_index_comparison_svg(
 
             ax.plot([x2 - mean_bar_width/2, x2 + mean_bar_width/2], [m2, m2],
                     color=mean_color, linewidth=mean_line_width)
+        '''    
+
+        # --- mean bars + SEM ---
+        m1 = paired_df["v1"].mean()
+        m2 = paired_df["v2"].mean()
+
+        sem1 = paired_df["v1"].sem()
+        sem2 = paired_df["v2"].sem()
+
+        if show_sem:
+            ax.errorbar(
+                x1 + mean_x_offset,
+                m1,
+                yerr=sem1,
+                fmt="none",
+                ecolor=mean_color,
+                elinewidth=sem_line_width,
+                capsize=sem_cap_width * 100,
+                capthick=sem_line_width,
+                zorder=4,
+            )
+
+            ax.errorbar(
+                x2 + mean_x_offset,
+                m2,
+                yerr=sem2,
+                fmt="none",
+                ecolor=mean_color,
+                elinewidth=sem_line_width,
+                capsize=sem_cap_width * 100,
+                capthick=sem_line_width,
+                zorder=4,
+            )
+
+        if show_mean:
+            mean_x1 = x1 + mean_x_offset
+            mean_x2 = x2 + mean_x_offset
+            ax.plot(
+                [mean_x1 - mean_bar_width/2, mean_x1 + mean_bar_width/2],
+                [m1, m1],
+                color=mean_color,
+                linewidth=mean_line_width,
+                zorder=5,
+            )
+
+            ax.plot(
+                [mean_x2 - mean_bar_width/2, mean_x2 + mean_bar_width/2],
+                [m2, m2],
+                color=mean_color,
+                linewidth=mean_line_width,
+                zorder=5,
+            )
+
+
 
         # --- significance ---
         if stars is not None:
@@ -2880,7 +3229,9 @@ def plot_paired_index_comparison_svg(
             )
 
         # ticks
-        if ytick_step is not None:
+        if y_ticks is not None:
+            ax.set_yticks(y_ticks)
+        else:
             low, high = ax.get_ylim()
             ax.set_yticks(np.arange(low, high + ytick_step, ytick_step))
 
