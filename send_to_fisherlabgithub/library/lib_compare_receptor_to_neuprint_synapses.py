@@ -923,181 +923,6 @@ def sum_and_mean_synapse_counts_combined_halves(
 
     return out
 
-'''
-# # an old plot_individual_vs_population_connectome that doesn't support the save svg function.
- 
-def plot_individual_vs_population_connectome(
-    indiv_dict,
-    pop_df,
-    line_color="tab:blue",
-    title=None,
-    *,
-    metric="SynapseCount",
-    mean_version="old",
-    individual_color_mode="same",   # "same" or "different"
-    individual_color="gray",
-    individual_alpha=0.45,
-    individual_linewidth=1,
-):
-    """
-    Plot individual traces and a population mean trace.
-
-    Parameters
-    ----------
-    indiv_dict : dict[str, pd.DataFrame]
-        Each DataFrame must contain the chosen metric column.
-
-    pop_df : pd.DataFrame
-        Population summary DataFrame.
-
-    line_color : str
-        Color for the population mean line.
-
-    title : str or None
-        Plot title.
-
-    metric : str
-        Either "SynapseCount" or "percentage_SynapseCount".
-
-    mean_version : str
-        Only used if metric == "percentage_SynapseCount".
-        Use "old" for percentage_SynapseCount_mean or "new" for
-        percentage_SynapseCount_mean_NEW.
-
-    individual_color_mode : str
-        "same" = all individual curves use individual_color.
-        "different" = individual curves use a matplotlib color cycle.
-
-    individual_color : str
-        Color for individual curves when individual_color_mode="same".
-
-    individual_alpha : float
-        Transparency for individual curves.
-
-    individual_linewidth : float
-        Line width for individual curves.
-    """
-    if not indiv_dict:
-        raise ValueError("indiv_dict is empty.")
-
-    metric = str(metric)
-    if metric not in {"SynapseCount", "percentage_SynapseCount"}:
-        raise ValueError("metric must be 'SynapseCount' or 'percentage_SynapseCount'.")
-
-    individual_color_mode = str(individual_color_mode).lower()
-    if individual_color_mode not in {"same", "different"}:
-        raise ValueError("individual_color_mode must be 'same' or 'different'.")
-
-    if metric == "SynapseCount":
-        pop_col = "SynapseCount_mean"
-        if pop_col not in pop_df.columns:
-            raise ValueError(f"pop_df must contain '{pop_col}'.")
-        y_pop_raw = pd.to_numeric(pop_df[pop_col], errors="coerce")
-        pop_label = "population (SynapseCount_mean)"
-
-    else:
-        mean_version = str(mean_version).lower()
-        if mean_version not in {"old", "new"}:
-            raise ValueError("mean_version must be 'old' or 'new'.")
-
-        if mean_version == "old":
-            pop_col = "percentage_SynapseCount_mean"
-            if pop_col not in pop_df.columns:
-                raise ValueError(f"pop_df must contain '{pop_col}'.")
-            y_pop_raw = pd.to_numeric(pop_df[pop_col], errors="coerce")
-            pop_label = "population (percentage_SynapseCount_mean)"
-
-        else:
-            if "percentage_SynapseCount_mean_NEW" in pop_df.columns:
-                y_pop_raw = pd.to_numeric(
-                    pop_df["percentage_SynapseCount_mean_NEW"],
-                    errors="coerce",
-                )
-                pop_label = "population (percentage_SynapseCount_mean_NEW)"
-            else:
-                if "SynapseCount_mean" not in pop_df.columns:
-                    raise ValueError(
-                        "pop_df must contain 'SynapseCount_mean' to compute NEW version."
-                    )
-                scm = pd.to_numeric(pop_df["SynapseCount_mean"], errors="coerce")
-                m = scm.max(skipna=True)
-                y_pop_raw = (scm / m) if (np.isfinite(m) and m != 0) else scm * 0
-                pop_label = "population (SynapseCount_mean / max)"
-
-    lengths = [len(df) for df in indiv_dict.values()]
-    lengths.append(len(pop_df))
-    L = int(min(lengths))
-
-    if "glomerulus" in pop_df.columns:
-        xtick_labels = pop_df["glomerulus"].astype(str).tolist()[:L]
-    elif "Glomerulus" in pop_df.columns:
-        xtick_labels = pop_df["Glomerulus"].astype(str).tolist()[:L]
-    else:
-        xtick_labels = [str(i) for i in range(L)]
-
-    x = np.arange(L)
-
-    plt.figure(figsize=(7, 5))
-
-    if individual_color_mode == "different":
-        color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-
-    for i, (name, df) in enumerate(indiv_dict.items()):
-        if metric not in df.columns:
-            raise ValueError(f"'{metric}' not found in individual df '{name}'.")
-
-        y_ind = pd.to_numeric(df[metric], errors="coerce").to_numpy()[:L]
-
-        if individual_color_mode == "same":
-            color = individual_color
-        else:
-            color = color_cycle[i % len(color_cycle)]
-
-        plt.plot(
-            x,
-            y_ind,
-            linewidth=individual_linewidth,
-            alpha=individual_alpha,
-            color=color,
-        )
-
-    if individual_color_mode == "same":
-        plt.plot(
-            [],
-            [],
-            linewidth=individual_linewidth,
-            color=individual_color,
-            alpha=individual_alpha,
-            label=f"individuals ({metric})",
-        )
-    else:
-        plt.plot(
-            [],
-            [],
-            linewidth=individual_linewidth,
-            color="gray",
-            alpha=individual_alpha,
-            label=f"individuals ({metric}, different colors)",
-        )
-
-    y_pop = y_pop_raw.to_numpy()[:L]
-    plt.plot(
-        x,
-        y_pop,
-        linewidth=4,
-        color=line_color,
-        marker="o",
-        label=pop_label,
-    )
-
-    plt.xticks(x, xtick_labels)
-    plt.xlabel("Glomerulus")
-    plt.ylabel(metric.replace("_", " "))
-    plt.title(title or f"Individuals vs Population (n={len(indiv_dict)})")
-    plt.legend(frameon=False)
-    plt.tight_layout()
-    plt.show()
-'''
 
 
 
@@ -1448,174 +1273,10 @@ def build_population_df(
     return pop
 
 
+
+
 '''
-# this is an old plot_individual_vs_population_ihc that doesn't support the save svg function.
-def plot_individual_vs_population_ihc(
-    indiv_dict,
-    pop_df,
-    metric="mean",
-    channel="green",
-    line_color=None,
-    *,
-    column=None,  # <-- NEW (optional full column override)
-    show_legend: bool = True,
-    individual_color_mode="same",
-    individual_color="gray",
-    individual_alpha=0.45,
-    individual_linewidth=1,
-):
-    """
-    Plot individual IHC traces and population average.
-
-    Supports both:
-    - metric + channel (e.g., metric="total", channel="green")
-    - full column name (e.g., column="percentage_total_green")
-
-    Parameters
-    ----------
-    indiv_dict : dict[str, pd.DataFrame]
-
-    pop_df : pd.DataFrame
-
-    metric : str
-        e.g. "mean", "total", "percentage"
-
-    channel : str
-        e.g. "green", "red", "total_green"
-
-    column : str or None
-        If provided, overrides metric+channel logic.
-        Example: "percentage_total_green"
-
-    line_color : str or None
-        Population line color (defaults to channel color)
-
-    show_legend : bool
-        Whether to display legend
-
-    individual_color_mode : str
-        "same" or "different"
-
-    individual_color : str
-        Used if individual_color_mode="same"
-    """
-
-    if not indiv_dict:
-        raise ValueError("indiv_dict is empty.")
-
-    # --- Determine signal column ---
-    if column is not None:
-        signal = column
-    else:
-        signal = f"{metric}_{channel}"
-
-    signal_avg = f"{signal}_avg"
-
-    # default color logic
-    if line_color is None:
-        if "green" in signal:
-            line_color = "green"
-        elif "red" in signal:
-            line_color = "red"
-        else:
-            line_color = "tab:blue"
-
-    # check pop_df
-    if signal_avg not in pop_df.columns:
-        raise ValueError(f"pop_df must contain '{signal_avg}'.")
-
-    # color mode
-    individual_color_mode = str(individual_color_mode).lower()
-    if individual_color_mode not in {"same", "different"}:
-        raise ValueError("individual_color_mode must be 'same' or 'different'.")
-
-    # determine common length
-    lengths = [len(df) for df in indiv_dict.values()]
-    lengths.append(len(pop_df))
-    L = min(lengths)
-
-    x = np.arange(L)
-
-    plt.figure(figsize=(7, 5))
-
-    # color cycle if needed
-    if individual_color_mode == "different":
-        color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-
-    # --- plot individuals ---
-    for i, (name, df) in enumerate(indiv_dict.items()):
-        if signal not in df.columns:
-            raise ValueError(f"'{signal}' not found in '{name}'.")
-
-        y = pd.to_numeric(df[signal], errors="coerce").to_numpy()[:L]
-
-        color = (
-            individual_color
-            if individual_color_mode == "same"
-            else color_cycle[i % len(color_cycle)]
-        )
-
-        plt.plot(
-            x,
-            y,
-            linewidth=individual_linewidth,
-            alpha=individual_alpha,
-            color=color,
-        )
-
-    # legend proxy for individuals
-    if show_legend:
-        legend_color = (
-            individual_color if individual_color_mode == "same" else "gray"
-        )
-        plt.plot(
-            [],
-            [],
-            linewidth=individual_linewidth,
-            color=legend_color,
-            alpha=individual_alpha,
-            label=f"individuals ({signal})",
-        )
-
-    # --- plot population ---
-    y_pop = pd.to_numeric(pop_df[signal_avg], errors="coerce").to_numpy()[:L]
-
-    plt.plot(
-        x,
-        y_pop,
-        linewidth=4,
-        color=line_color,
-        marker="o",
-        label=(f"population ({signal_avg})" if show_legend else None),
-    )
-
-    # x-axis labels
-    if "glomerulus" in pop_df.columns:
-        xtick_labels = pop_df["glomerulus"].astype(str).tolist()[:L]
-    else:
-        xtick_labels = [str(i) for i in range(L)]
-
-    plt.xticks(x, xtick_labels)
-    plt.xlabel("Glomerulus")
-    plt.ylabel(signal.replace("_", " "))
-    plt.title(f"Individuals vs Population (n={len(indiv_dict)})", pad=20)
-
-    if show_legend:
-        plt.legend(
-            frameon=False,
-            loc="upper center",
-            bbox_to_anchor=(0.5, 1.07),
-            ncol=2,
-            borderaxespad=0.0,
-        )
-        plt.tight_layout(rect=[0, 0, 1, 0.92])
-    else:
-        plt.tight_layout()
-
-    plt.show()
-'''
-
-
+OLD function, just in case...
 
 def plot_individual_vs_population_ihc(
     indiv_dict,
@@ -1830,8 +1491,304 @@ def plot_individual_vs_population_ihc(
             )
 
         plt.show()
+'''
 
 
+# NEWWWWWW
+def plot_individual_vs_population_ihc(
+    indiv_dict,
+    pop_df,
+    metric="mean",
+    channel="green",
+    line_color=None,
+    *,
+    column=None,
+    show_legend: bool = True,
+    number_of_legendcolumns: int = 2,
+    save_svg: str | Path | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    title: str | None = None,
+
+    # colors
+    individual_color_mode="same",   # "same" or "different"
+    individual_color="gray",
+    mean_line_color=None,
+    dot_color=None,
+
+    # line / dot sizes
+    individual_alpha=0.45,
+    individual_linewidth=1.0,
+    mean_linewidth=4.0,
+    dot_size=8.0,
+
+    # figure
+    figsize=(7, 5),
+
+    # font sizes
+    title_fontsize=16,
+    xlabel_fontsize=14,
+    ylabel_fontsize=14,
+    xtick_fontsize=12,
+    ytick_fontsize=12,
+    legend_fontsize=10,
+
+    # axis label style
+    ylabel_rotation=90,
+    ylabel_labelpad=10,
+
+    # axis/tick style
+    axis_linewidth=1.5,
+    tick_width=1.5,
+    tick_length=5,
+    axis_outward=6,
+
+    # y axis
+    y_max_pad_frac=0.08,
+    y_tick_decimals=1,
+    ymax_mode: str = "padded",   # "padded" or "exact"
+    auto_y_scale: bool = True,
+
+    # x axis
+    x_margin=0.5,
+):
+    if not indiv_dict:
+        raise ValueError("indiv_dict is empty.")
+
+    signal = column if column is not None else f"{metric}_{channel}"
+    signal_avg = f"{signal}_avg"
+
+    if line_color is None:
+        if "green" in signal:
+            line_color = "green"
+        elif "red" in signal:
+            line_color = "red"
+        else:
+            line_color = "tab:blue"
+
+    if mean_line_color is None:
+        mean_line_color = line_color
+
+    if dot_color is None:
+        dot_color = line_color
+
+    if signal_avg not in pop_df.columns:
+        raise ValueError(f"pop_df must contain '{signal_avg}'.")
+
+    individual_color_mode = individual_color_mode.lower()
+    if individual_color_mode not in {"same", "different"}:
+        raise ValueError("individual_color_mode must be 'same' or 'different'.")
+
+    lengths = [len(df) for df in indiv_dict.values()]
+    lengths.append(len(pop_df))
+    L = min(lengths)
+    x = np.arange(L)
+
+    all_y = []
+
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # individual traces
+        if individual_color_mode == "different":
+            color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+        for i, (name, df) in enumerate(indiv_dict.items()):
+            if signal not in df.columns:
+                raise ValueError(f"'{signal}' not found in '{name}'.")
+
+            y = pd.to_numeric(df[signal], errors="coerce").to_numpy()[:L]
+            all_y.extend(y[np.isfinite(y)])
+
+            color = (
+                individual_color
+                if individual_color_mode == "same"
+                else color_cycle[i % len(color_cycle)]
+            )
+
+            ax.plot(
+                x,
+                y,
+                linewidth=individual_linewidth,
+                alpha=individual_alpha,
+                color=color,
+                zorder=1,
+            )
+
+        # legend handle for individuals
+        if show_legend:
+            ax.plot(
+                [],
+                [],
+                linewidth=individual_linewidth,
+                color=individual_color,
+                alpha=individual_alpha,
+                label=f"individuals ({signal})",
+            )
+
+        # population trace
+        y_pop = pd.to_numeric(pop_df[signal_avg], errors="coerce").to_numpy()[:L]
+        all_y.extend(y_pop[np.isfinite(y_pop)])
+
+        ax.plot(
+            x,
+            y_pop,
+            linewidth=mean_linewidth,
+            color=mean_line_color,
+            marker="o",
+            markersize=dot_size,
+            markerfacecolor=dot_color,
+            markeredgecolor=dot_color,
+            label=(f"population ({signal_avg})" if show_legend else None),
+            zorder=3,
+        )
+
+        # x ticks
+        if "glomerulus" in pop_df.columns:
+            xtick_labels = pop_df["glomerulus"].astype(str).tolist()[:L]
+        else:
+            xtick_labels = [str(i) for i in range(L)]
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(xtick_labels)
+
+        # y-axis range
+        if len(all_y) == 0:
+            ymax_use = 1
+        else:
+            ymax_data = np.nanmax(all_y)
+
+            if ymax_mode == "exact":
+                ymax_use = ymax_data
+            elif ymax_mode == "padded":
+                ymax_use = ymax_data * (1 + y_max_pad_frac)
+            else:
+                raise ValueError("ymax_mode must be 'exact' or 'padded'.")
+
+            if ymax_use == 0:
+                ymax_use = 1
+
+        ax.set_ylim(0, ymax_use)
+
+        # y ticks: always 0, middle, max
+        y_ticks = np.linspace(0, ymax_use, 3)
+        ax.set_yticks(y_ticks)
+
+        # automatic y-axis scaling for display only
+        if auto_y_scale and ymax_use != 0:
+            y_scale_exp = int(np.floor(np.log10(abs(ymax_use))))
+
+            # do not scale ordinary values like 0.1–999
+            if -1 <= y_scale_exp <= 2:
+                y_scale_exp = 0
+        else:
+            y_scale_exp = 0
+
+        y_scale = 10 ** y_scale_exp
+
+        ax.set_yticklabels(
+            [f"{v / y_scale:.{y_tick_decimals}f}" for v in y_ticks]
+        )
+
+        # show scale factor only once, near y max
+        if y_scale_exp != 0:
+            ax.text(
+                -0.03,
+                1.02,
+                rf"$\times 10^{{{y_scale_exp}}}$",
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=ytick_fontsize,
+            )
+
+        # apply tick font sizes robustly
+        ax.tick_params(
+            axis="x",
+            labelsize=xtick_fontsize,
+            direction="out",
+            width=tick_width,
+            length=tick_length,
+        )
+
+        ax.tick_params(
+            axis="y",
+            labelsize=ytick_fontsize,
+            direction="out",
+            width=tick_width,
+            length=tick_length,
+        )
+
+        # labels
+        ax.set_xlabel(
+            xlabel if xlabel is not None else "Glomerulus",
+            fontsize=xlabel_fontsize,
+        )
+
+        ax.set_ylabel(
+            ylabel if ylabel is not None else signal.replace("_", " "),
+            fontsize=ylabel_fontsize,
+            rotation=ylabel_rotation,
+            labelpad=ylabel_labelpad,
+        )
+
+        ax.set_title(
+            title if title is not None else f"Individuals vs Population (n={len(indiv_dict)})",
+            fontsize=title_fontsize,
+            pad=20,
+        )
+
+        # remove box: keep only left and bottom spines
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        ax.spines["left"].set_linewidth(axis_linewidth)
+        ax.spines["bottom"].set_linewidth(axis_linewidth)
+
+        # move axes outward so x/y axes do not touch
+        ax.spines["left"].set_position(("outward", axis_outward))
+        ax.spines["bottom"].set_position(("outward", axis_outward))
+
+        # shorten axis lines
+        ax.spines["left"].set_bounds(0, ymax_use)
+        ax.spines["bottom"].set_bounds(x[0], x[-1])
+
+        # keep x-axis with margin
+        ax.set_xlim(x[0] - x_margin, x[-1] + x_margin)
+
+        if show_legend:
+            ax.legend(
+                frameon=False,
+                loc="upper center",
+                bbox_to_anchor=(0.5, 1.07),
+                ncol=number_of_legendcolumns,
+                borderaxespad=0.0,
+                fontsize=legend_fontsize,
+            )
+            fig.tight_layout(rect=[0, 0, 1, 0.92])
+        else:
+            fig.tight_layout()
+
+        if save_svg is not None:
+            save_svg = Path(save_svg)
+            save_svg.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(
+                save_svg,
+                format="svg",
+                bbox_inches="tight",
+                transparent=True,
+                metadata={"Creator": "plot_individual_vs_population_ihc"},
+            )
+
+        plt.show()
+
+
+
+
+
+
+'''
+OLD function, just in case...
 
 def plot_individual_vs_population_connectome(
     indiv_dict,
@@ -2043,6 +2000,379 @@ def plot_individual_vs_population_connectome(
             )
 
         plt.show()
+'''
+
+#NEWWWW
+def plot_individual_vs_population_connectome(
+    indiv_dict,
+    pop_df,
+    line_color="tab:blue",
+    title=None,
+    *,
+    metric="SynapseCount",
+    mean_version="old",
+    show_legend: bool = True,
+    save_svg: str | Path | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+
+    # colors
+    individual_color_mode="same",   # "same" or "different"
+    individual_color="gray",
+    mean_line_color=None,
+    dot_color=None,
+
+    # line / dot sizes
+    individual_alpha=0.45,
+    individual_linewidth=1.0,
+    mean_linewidth=4.0,
+    dot_size=8.0,
+
+    # figure
+    figsize=(7, 5),
+
+    # font sizes
+    title_fontsize=16,
+    xlabel_fontsize=14,
+    ylabel_fontsize=14,
+    xtick_fontsize=12,
+    ytick_fontsize=12,
+    legend_fontsize=10,
+
+    # legend
+    legend_ncol=1,
+    legend_loc="upper center",
+    legend_bbox=(0.5, 1.07),
+
+    # axis label style
+    ylabel_rotation=90,
+    ylabel_labelpad=10,
+
+    # axis/tick style
+    axis_linewidth=1.5,
+    tick_width=1.5,
+    tick_length=5,
+    axis_outward=6,
+
+    # y axis
+    y_max_pad_frac=0.08,
+    y_tick_decimals=1,
+    ymax_mode: str = "padded",   # "padded" or "exact"
+    auto_y_scale: bool = True,
+
+    # x axis
+    x_margin=0.5,
+    shorten_x_axis: bool = True,
+):
+    """
+    Plot individual connectome traces and a population summary trace,
+    with publication-style formatting and optional SVG export.
+    """
+
+    if not indiv_dict:
+        raise ValueError("indiv_dict is empty.")
+
+    metric = str(metric)
+    if metric not in {"SynapseCount", "percentage_SynapseCount"}:
+        raise ValueError("metric must be 'SynapseCount' or 'percentage_SynapseCount'.")
+
+    # -----------------------------
+    # choose population column
+    # -----------------------------
+    if metric == "SynapseCount":
+        pop_col = "SynapseCount_mean"
+
+        if pop_col not in pop_df.columns:
+            raise ValueError(f"pop_df must contain '{pop_col}'.")
+
+        y_pop_raw = pd.to_numeric(pop_df[pop_col], errors="coerce")
+        pop_label = "population (SynapseCount_mean)"
+
+    else:
+        mean_version = str(mean_version).lower()
+
+        if mean_version not in {"old", "new"}:
+            raise ValueError("mean_version must be 'old' or 'new'.")
+
+        if mean_version == "old":
+            pop_col = "percentage_SynapseCount_mean"
+
+            if pop_col not in pop_df.columns:
+                raise ValueError(f"pop_df must contain '{pop_col}'.")
+
+            y_pop_raw = pd.to_numeric(pop_df[pop_col], errors="coerce")
+            pop_label = "population (percentage_SynapseCount_mean)"
+
+        else:
+            if "percentage_SynapseCount_mean_NEW" in pop_df.columns:
+                pop_col = "percentage_SynapseCount_mean_NEW"
+                y_pop_raw = pd.to_numeric(pop_df[pop_col], errors="coerce")
+                pop_label = "population (percentage_SynapseCount_mean_NEW)"
+            else:
+                if "SynapseCount_mean" not in pop_df.columns:
+                    raise ValueError(
+                        "pop_df must contain 'SynapseCount_mean' to compute NEW version."
+                    )
+
+                pop_col = "SynapseCount_mean / max"
+                scm = pd.to_numeric(pop_df["SynapseCount_mean"], errors="coerce")
+                m = scm.max(skipna=True)
+                y_pop_raw = (scm / m) if (np.isfinite(m) and m != 0) else scm * 0
+                pop_label = "population (SynapseCount_mean / max)"
+
+    # -----------------------------
+    # colors
+    # -----------------------------
+    if mean_line_color is None:
+        mean_line_color = line_color
+
+    if dot_color is None:
+        dot_color = mean_line_color
+
+    individual_color_mode = str(individual_color_mode).lower()
+
+    if individual_color_mode not in {"same", "different"}:
+        raise ValueError("individual_color_mode must be 'same' or 'different'.")
+
+    # -----------------------------
+    # x-axis setup
+    # -----------------------------
+    lengths = [len(df) for df in indiv_dict.values()]
+    lengths.append(len(pop_df))
+    L = int(min(lengths))
+    x = np.arange(L)
+
+    if "glomerulus" in pop_df.columns:
+        xtick_labels = pop_df["glomerulus"].astype(str).tolist()[:L]
+    elif "Glomerulus" in pop_df.columns:
+        xtick_labels = pop_df["Glomerulus"].astype(str).tolist()[:L]
+    else:
+        xtick_labels = [str(i) for i in range(L)]
+
+    all_y = []
+
+    # -----------------------------
+    # plot
+    # -----------------------------
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        fig, ax = plt.subplots(figsize=figsize)
+
+        if individual_color_mode == "different":
+            color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+        for i, (name, df) in enumerate(indiv_dict.items()):
+            if metric not in df.columns:
+                raise ValueError(f"'{metric}' not found in individual df '{name}'.")
+
+            y_ind = pd.to_numeric(df[metric], errors="coerce").to_numpy()[:L]
+            all_y.extend(y_ind[np.isfinite(y_ind)])
+
+            color = (
+                individual_color
+                if individual_color_mode == "same"
+                else color_cycle[i % len(color_cycle)]
+            )
+
+            ax.plot(
+                x,
+                y_ind,
+                linewidth=individual_linewidth,
+                alpha=individual_alpha,
+                color=color,
+                zorder=1,
+            )
+
+        if show_legend:
+            legend_color = individual_color if individual_color_mode == "same" else "gray"
+
+            ax.plot(
+                [],
+                [],
+                linewidth=individual_linewidth,
+                color=legend_color,
+                alpha=individual_alpha,
+                label=f"individuals ({metric})",
+            )
+
+        y_pop = y_pop_raw.to_numpy()[:L]
+        all_y.extend(y_pop[np.isfinite(y_pop)])
+
+        ax.plot(
+            x,
+            y_pop,
+            linewidth=mean_linewidth,
+            color=mean_line_color,
+            marker="o",
+            markersize=dot_size,
+            markerfacecolor=dot_color,
+            markeredgecolor=dot_color,
+            label=(pop_label if show_legend else None),
+            zorder=3,
+        )
+
+        # -----------------------------
+        # x ticks
+        # -----------------------------
+        ax.set_xticks(x)
+        ax.set_xticklabels(xtick_labels)
+
+        # -----------------------------
+        # y-axis range
+        # -----------------------------
+        if len(all_y) == 0:
+            ymax_use = 1
+        else:
+            ymax_data = np.nanmax(all_y)
+
+            if ymax_mode == "exact":
+                ymax_use = ymax_data
+            elif ymax_mode == "padded":
+                ymax_use = ymax_data * (1 + y_max_pad_frac)
+            else:
+                raise ValueError("ymax_mode must be 'exact' or 'padded'.")
+
+            if ymax_use == 0:
+                ymax_use = 1
+
+        ax.set_ylim(0, ymax_use)
+
+        # y ticks: always 0, middle, max
+        y_ticks = np.linspace(0, ymax_use, 3)
+        ax.set_yticks(y_ticks)
+
+        # automatic y-axis scaling for display only
+        if auto_y_scale and ymax_use != 0:
+            y_scale_exp = int(np.floor(np.log10(abs(ymax_use))))
+
+            # do not scale ordinary values like 0.1–999
+            if -1 <= y_scale_exp <= 2:
+                y_scale_exp = 0
+        else:
+            y_scale_exp = 0
+
+        y_scale = 10 ** y_scale_exp
+
+        ax.set_yticklabels(
+            [f"{v / y_scale:.{y_tick_decimals}f}" for v in y_ticks]
+        )
+
+        if y_scale_exp != 0:
+            ax.text(
+                -0.03,
+                1.02,
+                rf"$\times 10^{{{y_scale_exp}}}$",
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=ytick_fontsize,
+            )
+
+        # -----------------------------
+        # tick styling
+        # -----------------------------
+        ax.tick_params(
+            axis="x",
+            labelsize=xtick_fontsize,
+            direction="out",
+            width=tick_width,
+            length=tick_length,
+        )
+
+        ax.tick_params(
+            axis="y",
+            labelsize=ytick_fontsize,
+            direction="out",
+            width=tick_width,
+            length=tick_length,
+        )
+
+        # -----------------------------
+        # labels / title
+        # -----------------------------
+        ax.set_xlabel(
+            xlabel if xlabel is not None else "Glomerulus",
+            fontsize=xlabel_fontsize,
+        )
+
+        ax.set_ylabel(
+            ylabel if ylabel is not None else metric.replace("_", " "),
+            fontsize=ylabel_fontsize,
+            rotation=ylabel_rotation,
+            labelpad=ylabel_labelpad,
+        )
+
+        ax.set_title(
+            title if title is not None else f"Individuals vs Population (n={len(indiv_dict)})",
+            fontsize=title_fontsize,
+            pad=20,
+        )
+
+        # -----------------------------
+        # axis style
+        # -----------------------------
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        ax.spines["left"].set_linewidth(axis_linewidth)
+        ax.spines["bottom"].set_linewidth(axis_linewidth)
+
+        ax.spines["left"].set_position(("outward", axis_outward))
+        ax.spines["bottom"].set_position(("outward", axis_outward))
+
+        ax.spines["left"].set_bounds(0, ymax_use)
+
+        if shorten_x_axis:
+            ax.spines["bottom"].set_bounds(x[0], x[-1])
+
+        ax.set_xlim(x[0] - x_margin, x[-1] + x_margin)
+
+        # -----------------------------
+        # legend
+        # -----------------------------
+        if show_legend:
+            ax.legend(
+                frameon=False,
+                loc=legend_loc,
+                bbox_to_anchor=legend_bbox,
+                ncol=legend_ncol,
+                borderaxespad=0.0,
+                fontsize=legend_fontsize,
+            )
+            fig.tight_layout(rect=[0, 0, 1, 0.92])
+        else:
+            fig.tight_layout()
+
+        # -----------------------------
+        # save
+        # -----------------------------
+        if save_svg is not None:
+            save_svg = Path(save_svg)
+            save_svg.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(
+                save_svg,
+                format="svg",
+                bbox_inches="tight",
+                transparent=True,
+                metadata={"Creator": "plot_individual_vs_population_connectome"},
+            )
+
+        plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2174,7 +2504,7 @@ def plot_individual_vs_population_ihc_with_stats(
     stat_text_offset=0.015,
     stat_fontsize=12,
     column_label_for_stats=None,
-    figsize=(7, 5),   # ✅ NEW PARAMETER
+    figsize=(7, 5),
     show_legend: bool = True,
     save_svg: str | Path | None = None,
     xlabel: str | None = None,
@@ -3499,3 +3829,653 @@ def plot_upstream_mix(
         plt.show()
 
     return summary
+
+
+
+def plot_upstream_type_totals(
+    df: pd.DataFrame,
+    *,
+    type_col: str = "upstream_type",
+    count_col: str = "total_synapse_count",
+    priority_types: Sequence[str] = ("Delta7", "LPsP", "P1-9", "P6-8P9"),
+    unknown_label: str = "unknown",
+    scale_to_100: bool = True,
+    colors: Optional[Mapping[str, str] | Sequence[str]] = None,
+    default_color: str = "0.7",
+    title: Optional[str] = "upstream source mix",
+    xlabel: Optional[str] = "upstream type",
+    ylabel: Optional[str] = None,
+    ymin: float | None = None,
+    ymax: float | None = None,
+    n_yticks: int = 3,
+    figsize: tuple[float, float] = (12, 4),
+    bar_width: float = 0.55,
+    bar_gap: float = 0.3,
+    edgecolor: str = "0.2",
+    edge_lw: float = 0.8,
+    show_labels: bool = True,
+    label_fmt: str = "{:.1f}%",
+    label_fontsize: float = 8,
+    label_rotation: float = 90,
+    label_offset_frac: float = 0.01,
+    xtick_rotation: float = 60,
+    xtick_ha: str = "right",
+    show_grid: bool = False,
+    bracket_types: Sequence[str] | None = None,
+    bracket_label: str | None = None,
+    bracket_y_frac: float = -0.32,
+    bracket_h_frac: float = 0.05,
+    bracket_linewidth: float = 1.5,
+    bracket_fontsize: float = 10,
+    save: bool = False,
+    filename: str | Path = "upstream_type_totals.svg",
+    return_ordered_df: bool = True,
+) -> pd.DataFrame | None:
+    """
+    Plot upstream neuron-type contribution as percentage of total synapse count.
+
+    Ordering:
+    1. priority_types appear first in the exact order provided
+    2. all remaining types are sorted by count_col from high to low
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain type_col and count_col.
+
+    type_col : str
+        Column containing upstream neuron type names.
+
+    count_col : str
+        Column containing total synapse counts.
+
+    priority_types : sequence of str
+        Types to force to the left side of the plot.
+
+    unknown_label : str
+        Label used to replace NaN upstream type names.
+
+    scale_to_100 : bool
+        If True, plot percentage from 0-100.
+        If False, plot fraction from 0-1.
+
+    colors : mapping or sequence or None
+        If dict, maps upstream type → color.
+        If sequence, uses colors in order.
+        If None, uses default_color.
+
+    default_color : str
+        Color for bars not listed in colors.
+
+    title, xlabel, ylabel : str or None
+        Plot labels.
+
+    figsize : tuple
+        Figure size.
+
+    bar_width : float
+        Bar width.
+
+    bar_gap : float
+        Gap between bars.
+
+    edgecolor, edge_lw : str, float
+        Bar edge styling.
+
+    show_labels : bool
+        Whether to place percentage labels above bars.
+
+    label_fmt : str
+        Format for labels. Usually "{:.1f}%".
+
+    label_fontsize : float
+        Label font size.
+
+    label_rotation : float
+        Rotation angle for labels above bars.
+
+    label_offset_frac : float
+        Label y-offset as fraction of y-axis range.
+
+    xtick_rotation : float
+        X tick label rotation.
+
+    xtick_ha : str
+        X tick horizontal alignment.
+
+    show_grid : bool
+        Whether to show y-axis grid.
+
+    bracket_types : sequence of str or None
+        Types to bracket with a horizontal line.
+
+    bracket_label : str or None
+        Label for the bracket.
+
+    bracket_y_frac : float
+        Y position of the bracket as a fraction of the y-axis range.
+
+    bracket_h_frac : float
+        Height of the bracket as a fraction of the y-axis range.
+
+    bracket_linewidth : float
+        Width of the bracket line.
+
+    bracket_fontsize : float
+        Font size of the bracket label.
+
+    save : bool
+        Whether to save SVG.
+
+    filename : str or Path
+        Output SVG path.
+
+    return_ordered_df : bool
+        If True, return the ordered plotting DataFrame.
+
+    Returns
+    -------
+    pd.DataFrame or None
+        Ordered plotting DataFrame if return_ordered_df=True.
+    """
+
+    if type_col not in df.columns:
+        raise ValueError(f"Missing type column: {type_col}")
+
+    if count_col not in df.columns:
+        raise ValueError(f"Missing count column: {count_col}")
+
+    plot_df = df[[type_col, count_col]].copy()
+
+    plot_df[type_col] = plot_df[type_col].fillna(unknown_label)
+    plot_df[count_col] = pd.to_numeric(plot_df[count_col], errors="coerce").fillna(0)
+
+    total = plot_df[count_col].sum()
+
+    if not np.isfinite(total) or total <= 0:
+        plot_df["fraction"] = 0.0
+    else:
+        plot_df["fraction"] = plot_df[count_col] / total
+
+    plot_df["percentage"] = plot_df["fraction"] * (100 if scale_to_100 else 1)
+
+    priority_df = plot_df[plot_df[type_col].isin(priority_types)].copy()
+    priority_df["__order"] = priority_df[type_col].map(
+        {name: i for i, name in enumerate(priority_types)}
+    )
+    priority_df = priority_df.sort_values("__order").drop(columns="__order")
+
+    rest_df = plot_df[~plot_df[type_col].isin(priority_types)].copy()
+    rest_df = rest_df.sort_values(count_col, ascending=False)
+
+    ordered_df = pd.concat([priority_df, rest_df], ignore_index=True)
+
+    if ylabel is None:
+        ylabel = "percentage of total synapse count" if scale_to_100 else "fraction of total synapse count"
+
+    step = 1.0 + float(bar_gap)
+    x = np.arange(len(ordered_df)) * step
+
+    if colors is None:
+        bar_colors = [default_color] * len(ordered_df)
+    elif isinstance(colors, dict):
+        bar_colors = [
+            colors.get(t, default_color)
+            for t in ordered_df[type_col]
+        ]
+    else:
+        color_list = list(colors)
+        bar_colors = (
+            color_list * (len(ordered_df) // len(color_list) + 1)
+        )[:len(ordered_df)]
+
+    used_width = min(bar_width, step * 0.9)
+
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        fig, ax = plt.subplots(figsize=figsize)
+
+        bars = ax.bar(
+            x,
+            ordered_df["percentage"],
+            width=used_width,
+            color=bar_colors,
+            edgecolor=edgecolor,
+            linewidth=edge_lw,
+        )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(
+            ordered_df[type_col],
+            rotation=xtick_rotation,
+            ha=xtick_ha,
+        )
+
+        ax.set_xlabel(xlabel or "")
+        ax.set_ylabel(ylabel)
+
+        if title:
+            ax.set_title(title, pad=10)
+
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        # ---------- y-axis control ----------
+        if ymin is None:
+            ymin_use = 0
+        else:
+            ymin_use = ymin
+
+        if ymax is not None:
+            ymax_use = ymax
+        else:
+            _, current_high = ax.get_ylim()
+            ymax_use = current_high
+
+        ax.set_ylim(ymin_use, ymax_use)
+
+        # 3 ticks: min, middle, max
+        ax.set_yticks(
+            np.linspace(ymin_use, ymax_use, n_yticks)
+        )
+
+        # shorten y-axis spine
+        ax.spines["left"].set_bounds(
+            ymin_use,
+            ymax_use,
+        )
+
+        if show_grid:
+            ax.grid(True, axis="y", alpha=0.2, linewidth=0.8)
+
+        ax.set_xlim(x[0] - step * 0.6, x[-1] + step * 0.6)
+        # ---------- optional bracket below x-axis ----------
+        if bracket_types is not None and bracket_label is not None:
+            type_to_x = dict(zip(ordered_df[type_col], x))
+
+            missing = [t for t in bracket_types if t not in type_to_x]
+            if missing:
+                raise ValueError(f"bracket_types not found in plot: {missing}")
+
+            x_start = type_to_x[bracket_types[0]]
+            x_end = type_to_x[bracket_types[-1]]
+
+            y0 = bracket_y_frac
+            h = bracket_h_frac
+
+            trans = ax.get_xaxis_transform()
+
+            ax.plot(
+                [x_start, x_start, x_end, x_end],
+                [y0 + h, y0, y0, y0 + h],
+                color="black",
+                linewidth=bracket_linewidth,
+                transform=trans,
+                clip_on=False,
+            )
+
+            ax.text(
+                (x_start + x_end) / 2,
+                y0 - h * 0.9,
+                bracket_label,
+                ha="center",
+                va="top",
+                fontsize=bracket_fontsize,
+                transform=trans,
+                clip_on=False,
+            )
+
+        if show_labels:
+            label_vals = ordered_df["percentage"].to_numpy()
+            ylim = ax.get_ylim()
+            y_off = label_offset_frac * (ylim[1] - ylim[0])
+
+            for bar, v in zip(bars, label_vals):
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + y_off,
+                    label_fmt.format(v),
+                    ha="center",
+                    va="bottom",
+                    fontsize=label_fontsize,
+                    rotation=label_rotation,
+                    clip_on=False,
+                )
+
+        fig.tight_layout()
+
+        if save:
+            out = Path(filename)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(
+                out,
+                format="svg",
+                bbox_inches="tight",
+                transparent=True,
+                metadata={"Creator": "plot_upstream_type_totals"},
+            )
+
+        plt.show()
+
+    if return_ordered_df:
+        return ordered_df
+
+    return None
+
+
+def plot_upstream_type_totals_by_nt(
+    df: pd.DataFrame,
+    neurotransmitter_df: pd.DataFrame,
+    *,
+    type_col: str = "upstream_type",
+    count_col: str = "total_synapse_count",
+    nt_type_col: str = "neuron_type",
+    nt_col: str = "neurotransmitter",
+    nt_order: Sequence[str] = (
+        "glutamate",
+        "acetylcholine",
+        "tyramine",
+        "dopamine",
+        "octopamine",
+    ),
+    unsure_label: str = "unsure",
+    unknown_type_label: str = "unknown",
+    scale_to_100: bool = True,
+    colors: Optional[Mapping[str, str] | Sequence[str]] = None,
+    nt_colors: Optional[Mapping[str, str]] = None,
+    default_color: str = "0.7",
+    title: Optional[str] = "upstream source mix by neurotransmitter",
+    xlabel: Optional[str] = "upstream type",
+    ylabel: Optional[str] = None,
+    ymin: float | None = 0,
+    ymax: float | None = None,
+    n_yticks: int = 3,
+    figsize: tuple[float, float] = (14, 5),
+    bar_width: float = 0.55,
+    bar_gap: float = 0.3,
+    edgecolor: str = "0.2",
+    edge_lw: float = 0.8,
+    show_labels: bool = True,
+    label_fmt: str = "{:.1f}%",
+    label_fontsize: float = 8,
+    label_rotation: float = 0,
+    label_offset_frac: float = 0.01,
+    xtick_rotation: float = 60,
+    xtick_ha: str = "right",
+    fontsize_axis_label: float = 12,
+    fontsize_ticks: float = 10,
+    fontsize_title: float = 14,
+    show_grid: bool = False,
+    group_gap: float = 0.9,
+    show_group_brackets: bool = True,
+    bracket_y_frac: float = -0.55,
+    bracket_h_frac: float = 0.05,
+    bracket_linewidth: float = 1.5,
+    bracket_fontsize: float = 10,
+    bottom_adjust: float = 0.45,
+    save: bool = False,
+    filename: str | Path = "upstream_type_totals_by_nt.svg",
+    return_ordered_df: bool = True,
+) -> pd.DataFrame | None:
+    """
+    Plot upstream neuron-type contribution grouped by neurotransmitter.
+
+    Grouping rule:
+    - Merge df with neurotransmitter_df by neuron type.
+    - If neurotransmitter is exactly one of nt_order, assign that group.
+    - Otherwise assign unsure_label.
+    - Within each neurotransmitter group, sort bars by count_col high to low.
+    - Draw one bracket below the x tick labels / x-axis title for each group.
+
+    Notes:
+    - Mixed labels such as 'acetylcholine/dopamine' are treated as unsure
+      unless that exact string is included in nt_order.
+    - Types missing from neurotransmitter_df are treated as unsure.
+    """
+
+    if type_col not in df.columns:
+        raise ValueError(f"Missing type column: {type_col}")
+
+    if count_col not in df.columns:
+        raise ValueError(f"Missing count column: {count_col}")
+
+    if nt_type_col not in neurotransmitter_df.columns:
+        raise ValueError(f"Missing neurotransmitter type column: {nt_type_col}")
+
+    if nt_col not in neurotransmitter_df.columns:
+        raise ValueError(f"Missing neurotransmitter column: {nt_col}")
+
+    # -----------------------------
+    # prepare data
+    # -----------------------------
+    plot_df = df[[type_col, count_col]].copy()
+    plot_df[type_col] = plot_df[type_col].fillna(unknown_type_label)
+    plot_df[count_col] = pd.to_numeric(plot_df[count_col], errors="coerce").fillna(0)
+
+    nt_lookup = neurotransmitter_df[[nt_type_col, nt_col]].copy()
+    nt_lookup[nt_type_col] = nt_lookup[nt_type_col].astype(str)
+    nt_lookup[nt_col] = nt_lookup[nt_col].astype(str)
+
+    plot_df = plot_df.merge(
+        nt_lookup,
+        left_on=type_col,
+        right_on=nt_type_col,
+        how="left",
+    )
+
+    nt_order = list(nt_order)
+    full_group_order = nt_order + [unsure_label]
+
+    plot_df["nt_group"] = np.where(
+        plot_df[nt_col].isin(nt_order),
+        plot_df[nt_col],
+        unsure_label,
+    )
+
+    total = plot_df[count_col].sum()
+
+    if not np.isfinite(total) or total <= 0:
+        plot_df["fraction"] = 0.0
+    else:
+        plot_df["fraction"] = plot_df[count_col] / total
+
+    plot_df["percentage"] = plot_df["fraction"] * (100 if scale_to_100 else 1)
+
+    # -----------------------------
+    # order data by NT group, then synapse count high -> low
+    # -----------------------------
+    ordered_parts = []
+
+    for group_name in full_group_order:
+        group_df = plot_df[plot_df["nt_group"] == group_name].copy()
+
+        if group_df.empty:
+            continue
+
+        group_df = group_df.sort_values(
+            count_col,
+            ascending=False,
+        )
+
+        ordered_parts.append(group_df)
+
+    if not ordered_parts:
+        raise ValueError("No rows available after neurotransmitter grouping.")
+
+    ordered_df = pd.concat(ordered_parts, ignore_index=True)
+
+    if ylabel is None:
+        ylabel = (
+            "percentage of total synapse count"
+            if scale_to_100
+            else "fraction of total synapse count"
+        )
+
+    # -----------------------------
+    # x positions with larger gaps between NT groups
+    # -----------------------------
+    x_positions = []
+    group_ranges = {}
+
+    current_x = 0.0
+
+    for group_name in full_group_order:
+        group_indices = ordered_df.index[ordered_df["nt_group"] == group_name].tolist()
+
+        if not group_indices:
+            continue
+
+        group_xs = []
+
+        for idx in group_indices:
+            x_positions.append(current_x)
+            group_xs.append(current_x)
+            current_x += 1.0 + float(bar_gap)
+
+        group_ranges[group_name] = (min(group_xs), max(group_xs))
+
+        current_x += float(group_gap)
+
+    x = np.array(x_positions, dtype=float)
+
+    used_width = min(bar_width, (1.0 + float(bar_gap)) * 0.9)
+
+    # -----------------------------
+    # colors
+    # -----------------------------
+    if nt_colors is None:
+        nt_colors = {}
+
+    if colors is None:
+        bar_colors = [
+            nt_colors.get(group, default_color)
+            for group in ordered_df["nt_group"]
+        ]
+    elif isinstance(colors, dict):
+        bar_colors = [
+            colors.get(t, nt_colors.get(group, default_color))
+            for t, group in zip(ordered_df[type_col], ordered_df["nt_group"])
+        ]
+    else:
+        color_list = list(colors)
+        bar_colors = (
+            color_list * (len(ordered_df) // len(color_list) + 1)
+        )[:len(ordered_df)]
+
+    # -----------------------------
+    # plot
+    # -----------------------------
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        fig, ax = plt.subplots(figsize=figsize)
+
+        bars = ax.bar(
+            x,
+            ordered_df["percentage"],
+            width=used_width,
+            color=bar_colors,
+            edgecolor=edgecolor,
+            linewidth=edge_lw,
+        )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(
+            ordered_df[type_col],
+            rotation=xtick_rotation,
+            ha=xtick_ha,
+            fontsize=fontsize_ticks,
+        )
+
+        ax.set_xlabel(xlabel or "", fontsize=fontsize_axis_label, labelpad=40,)
+        ax.set_ylabel(ylabel, fontsize=fontsize_axis_label)
+
+        if title:
+            ax.set_title(title, fontsize=fontsize_title, pad=10)
+
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        # y-axis control
+        ymin_use = 0 if ymin is None else ymin
+
+        if ymax is not None:
+            ymax_use = ymax
+        else:
+            _, current_high = ax.get_ylim()
+            ymax_use = current_high
+
+        ax.set_ylim(ymin_use, ymax_use)
+        ax.set_yticks(np.linspace(ymin_use, ymax_use, n_yticks))
+        ax.spines["left"].set_bounds(ymin_use, ymax_use)
+
+        for tick in ax.get_yticklabels():
+            tick.set_fontsize(fontsize_ticks)
+
+        if show_grid:
+            ax.grid(True, axis="y", alpha=0.2, linewidth=0.8)
+
+        ax.set_xlim(x[0] - 0.7, x[-1] + 0.7)
+
+        # value labels
+        if show_labels:
+            label_vals = ordered_df["percentage"].to_numpy()
+            ylim = ax.get_ylim()
+            y_off = label_offset_frac * (ylim[1] - ylim[0])
+
+            for bar, v in zip(bars, label_vals):
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + y_off,
+                    label_fmt.format(v),
+                    ha="center",
+                    va="bottom",
+                    fontsize=label_fontsize,
+                    rotation=label_rotation,
+                    clip_on=False,
+                )
+
+        # group brackets all on the same level, below x tick labels and x-axis title
+        if show_group_brackets:
+            trans = ax.get_xaxis_transform()
+
+            for group_name, (x_start, x_end) in group_ranges.items():
+                y0 = bracket_y_frac
+                h = bracket_h_frac
+
+                ax.plot(
+                    [x_start, x_start, x_end, x_end],
+                    [y0 + h, y0, y0, y0 + h],
+                    color="black",
+                    linewidth=bracket_linewidth,
+                    transform=trans,
+                    clip_on=False,
+                )
+
+                ax.text(
+                    (x_start + x_end) / 2,
+                    y0 - h * 0.9,
+                    group_name,
+                    ha="center",
+                    va="top",
+                    fontsize=bracket_fontsize,
+                    transform=trans,
+                    clip_on=False,
+                )
+
+        fig.subplots_adjust(bottom=bottom_adjust)
+
+        if save:
+            out = Path(filename)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(
+                out,
+                format="svg",
+                bbox_inches="tight",
+                transparent=True,
+                metadata={"Creator": "plot_upstream_type_totals_by_nt"},
+            )
+
+        plt.show()
+
+    if return_ordered_df:
+        return ordered_df
+
+    return None
