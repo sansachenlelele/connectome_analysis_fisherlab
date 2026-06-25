@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import seaborn as sns
+from typing import Optional, Sequence, Mapping
 
 from kylie_lib import syn_specs
 from scipy.optimize import curve_fit
@@ -1463,6 +1464,18 @@ def roll_each_row_to_center_glomerulus(
 
 
 
+
+
+def round_up_to_nice_number(value: float) -> float:
+    if value <= 0:
+        return value
+
+    magnitude = 10 ** np.floor(np.log10(value))
+    return np.ceil(value / magnitude) * magnitude
+
+'''
+OLD version, doesn't contain the beautifying features, but have the default plotting features.
+
 def plot_each_row_as_line(
     df: pd.DataFrame,
     *,
@@ -1553,16 +1566,269 @@ def plot_each_row_as_line(
             )
 
         plt.show()
+'''
+
+# NEWWWWWW
+def plot_each_row_as_line(
+    df: pd.DataFrame,
+    *,
+    figsize=(7, 5),
+    color="tab:blue",
+    alpha: float = 0.3,
+    linewidth: float = 1,
+    mean_color: str | None = "black",
+    mean_linewidth: float = 3,
+    marker: str | None = None,
+    marker_size: float = 5,
+    xlabel: str = "Column",
+    ylabel: str = "Value",
+    title: str | None = None,
+    show_legend: bool = False,
+    save_svg: str | Path | None = None,
+
+    # new controls
+    ylim: tuple[float, float] | None = None,
+    xlim: tuple[float, float] | None = None,
+    xtick_rotation: float = 0,
+    show_mean: bool = True,
+    show_individual: bool = True,
+    mean_label: str = "mean",
+    title_fontsize: float = 14,
+    axis_label_size: float = 12,
+    tick_label_size: float = 10,
+    hide_legend_if_only_mean: bool = True,
+    save_png: str | Path | None = None,
+
+    # y tick controls
+    y_min_mode: str = "zero",   # "zero" or "data"
+    y_max_pad_frac: float = 0.05,
+    ytick_decimals: int | None = None,
+
+    # global style controls
+    font_size: float | None = None,
+    legend_fontsize: float | None = None,
+    axis_linewidth: float = 1.5,
+    tick_length: float = 4,
+    tick_width: float = 1.5,
+
+    # axis spacing controls
+    x_axis_y_offset_frac: float = 0.04,
+    y_axis_x_offset_frac: float = 0.04,
+):
+    """
+    Plot each row of a DataFrame as one line.
+
+    Assumes:
+    - rows = observations / cells
+    - columns = ordered x positions
+    """
+
+    plot_df = df.apply(pd.to_numeric, errors="coerce")
+
+    x = np.arange(len(plot_df.columns))
+
+    all_vals = plot_df.to_numpy(dtype=float)
+    data_min = np.nanmin(all_vals)
+    data_max = np.nanmax(all_vals)
+
+    if y_min_mode == "zero":
+        y_bottom = 0
+    elif y_min_mode == "data":
+        y_bottom = data_min
+    else:
+        raise ValueError("y_min_mode must be either 'zero' or 'data'.")
+
+    y_range = data_max - y_bottom
+
+    if y_range == 0:
+        y_range = abs(data_max) if data_max != 0 else 1
+
+    y_top = data_max + y_max_pad_frac * y_range
+    y_top = round_up_to_nice_number(y_top)
+    y_middle = (y_bottom + y_top) / 2
+
+    auto_ylim = (y_bottom, y_top)
+    auto_yticks = [y_bottom, y_middle, y_top]
+
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # master font size
+        if font_size is not None:
+            title_fontsize = font_size
+            axis_label_size = font_size
+            tick_label_size = font_size
+
+            if legend_fontsize is None:
+                legend_fontsize = font_size
+
+        # individual rows
+        if show_individual:
+            for idx, row in plot_df.iterrows():
+                ax.plot(
+                    x,
+                    row.to_numpy(dtype=float),
+                    color=color,
+                    alpha=alpha,
+                    linewidth=linewidth,
+                    marker=marker,
+                    markersize=marker_size,
+                    label=str(idx) if show_legend else None,
+                )
+
+        # mean line
+        if show_mean and mean_color is not None:
+            mean_vals = plot_df.mean(axis=0).to_numpy(dtype=float)
+
+            ax.plot(
+                x,
+                mean_vals,
+                color=mean_color,
+                linewidth=mean_linewidth,
+                marker=marker,
+                markersize=marker_size,
+                label=mean_label,
+            )
+
+        # x axis
+        if xlim is None:
+            ax.set_xlim(x[0], x[-1])
+        else:
+            ax.set_xlim(xlim)
+
+        # y axis
+        if ylim is None:
+            ax.set_ylim(auto_ylim)
+            ax.set_yticks(auto_yticks)
+
+            if ytick_decimals is not None:
+                ax.set_yticklabels(
+                    [f"{v:.{ytick_decimals}f}" for v in auto_yticks]
+                )
+
+        else:
+            ax.set_ylim(ylim)
+
+            y_bottom_manual, y_top_manual = ylim
+            y_middle_manual = (y_bottom_manual + y_top_manual) / 2
+
+            manual_ticks = [
+                y_bottom_manual,
+                y_middle_manual,
+                y_top_manual,
+            ]
+
+            ax.set_yticks(manual_ticks)
+
+            if ytick_decimals is not None:
+                ax.set_yticklabels(
+                    [f"{v:.{ytick_decimals}f}" for v in manual_ticks]
+                )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(
+            plot_df.columns,
+            rotation=xtick_rotation,
+            fontsize=tick_label_size,
+        )
+
+        ax.set_xlabel(xlabel, fontsize=axis_label_size)
+        ax.set_ylabel(ylabel, fontsize=axis_label_size)
+
+        if title:
+            ax.set_title(title, fontsize=title_fontsize)
+
+        # tick length, width, and tick-label font size
+        ax.tick_params(
+            axis="both",
+            which="major",
+            labelsize=tick_label_size,
+            length=tick_length,
+            width=tick_width,
+        )
+
+        # spines
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        ax.spines["left"].set_linewidth(axis_linewidth)
+        ax.spines["bottom"].set_linewidth(axis_linewidth)
+
+        # offset x and y axes so they do not touch at the corner
+        x0, x1 = ax.get_xlim()
+        y0, y1 = ax.get_ylim()
+
+        x_offset = y_axis_x_offset_frac * (x1 - x0)
+        y_offset = x_axis_y_offset_frac * (y1 - y0)
+
+        ax.spines["left"].set_position(("data", x0 - x_offset))
+        ax.spines["bottom"].set_position(("data", y0 - y_offset))
+
+        # keep ticks only on left/bottom
+        ax.yaxis.set_ticks_position("left")
+        ax.xaxis.set_ticks_position("bottom")
+
+        # legend behavior
+        if show_legend:
+            ax.legend(
+                frameon=False,
+                fontsize=legend_fontsize,
+            )
+
+        elif show_mean and mean_color is not None and not hide_legend_if_only_mean:
+            ax.legend(
+                frameon=False,
+                fontsize=legend_fontsize,
+            )
+
+        fig.tight_layout()
+
+        if save_svg is not None:
+            save_svg = Path(save_svg)
+            save_svg.parent.mkdir(parents=True, exist_ok=True)
+
+            fig.savefig(
+                save_svg,
+                format="svg",
+                bbox_inches="tight",
+                transparent=True,
+                metadata={"Creator": "plot_each_row_as_line"},
+            )
+
+        if save_png is not None:
+            save_png = Path(save_png)
+            save_png.parent.mkdir(parents=True, exist_ok=True)
+
+            fig.savefig(
+                save_png,
+                format="png",
+                dpi=300,
+                bbox_inches="tight",
+                transparent=True,
+                metadata={"Creator": "plot_each_row_as_line"},
+            )
+
+        plt.show()
 
 
 
 
+
+
+
+
+
+
+
+
+'''
+OLD version, doesn't contain the beautifying features, but have the default plotting features.
 def plot_two_dfs_each_row_as_line(
     df1: pd.DataFrame,
     df2: pd.DataFrame,
     *,
     df1_color: str = "tab:blue",
-    df2_color: str = "purple",
+    df2_color: str = "tab:purple",
     df1_label: str = "df1 mean",
     df2_label: str = "df2 mean",
     alpha: float = 0.25,
@@ -1672,7 +1938,278 @@ def plot_two_dfs_each_row_as_line(
             )
 
         plt.show()
+'''
 
+
+# NEWWW
+def plot_two_dfs_each_row_as_line(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    *,
+    df1_color: str = "tab:blue",
+    df2_color: str = "purple",
+    df1_label: str = "df1 mean",
+    df2_label: str = "df2 mean",
+    alpha: float = 0.25,
+    linewidth: float = 1,
+    mean_linewidth: float = 4,
+    marker: str | None = None,
+    marker_size: float = 5,
+    figsize=(7, 5),
+    xlabel: str = "Position",
+    ylabel: str = "Value",
+    title: str | None = None,
+    save_svg: str | Path | None = None,
+
+    # added controls
+    ylim: tuple[float, float] | None = None,
+    xlim: tuple[float, float] | None = None,
+    xtick_rotation: float = 0,
+    show_mean: bool = True,
+    show_individual: bool = True,
+    show_legend: bool = True,
+    title_fontsize: float = 14,
+    axis_label_size: float = 12,
+    tick_label_size: float = 10,
+    save_png: str | Path | None = None,
+
+    # y-axis tick controls
+    y_min_mode: str = "zero",   # "zero" or "data"
+    y_max_pad_frac: float = 0.05,
+    ytick_decimals: int | None = None,
+
+    # global style controls
+    font_size: float | None = None,
+    legend_fontsize: float | None = None,
+    axis_linewidth: float = 1.5,
+    tick_length: float = 4,
+    tick_width: float = 1.5,
+
+    # axis spacing controls
+    x_axis_y_offset_frac: float = 0.04,
+    y_axis_x_offset_frac: float = 0.04,
+):
+    """
+    Plot all rows from two DataFrames as lines on the same plot.
+
+    - all rows from df1 plotted in one color
+    - all rows from df2 plotted in another color
+    - mean line for each df also plotted
+    """
+
+    if not df1.columns.equals(df2.columns):
+        raise ValueError("df1 and df2 must have identical columns.")
+
+    plot_df1 = df1.apply(pd.to_numeric, errors="coerce")
+    plot_df2 = df2.apply(pd.to_numeric, errors="coerce")
+
+    x = np.arange(len(plot_df1.columns))
+
+    all_vals = np.concatenate([
+        plot_df1.to_numpy(dtype=float).ravel(),
+        plot_df2.to_numpy(dtype=float).ravel(),
+    ])
+
+    data_min = np.nanmin(all_vals)
+    data_max = np.nanmax(all_vals)
+
+    if y_min_mode == "zero":
+        y_bottom = 0
+    elif y_min_mode == "data":
+        y_bottom = data_min
+    else:
+        raise ValueError("y_min_mode must be either 'zero' or 'data'.")
+
+    y_range = data_max - y_bottom
+
+    if y_range == 0:
+        y_range = abs(data_max) if data_max != 0 else 1
+
+    y_top = data_max + y_max_pad_frac * y_range
+    y_top = round_up_to_nice_number(y_top)
+    y_middle = (y_bottom + y_top) / 2
+
+    auto_ylim = (y_bottom, y_top)
+    auto_yticks = [y_bottom, y_middle, y_top]
+
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # master font size
+        if font_size is not None:
+            title_fontsize = font_size
+            axis_label_size = font_size
+            tick_label_size = font_size
+
+            if legend_fontsize is None:
+                legend_fontsize = font_size
+
+        # ---------------- df1 individual ----------------
+        if show_individual:
+            for _, row in plot_df1.iterrows():
+                ax.plot(
+                    x,
+                    row.to_numpy(dtype=float),
+                    color=df1_color,
+                    alpha=alpha,
+                    linewidth=linewidth,
+                    marker=marker,
+                    markersize=marker_size,
+                )
+
+        # ---------------- df2 individual ----------------
+        if show_individual:
+            for _, row in plot_df2.iterrows():
+                ax.plot(
+                    x,
+                    row.to_numpy(dtype=float),
+                    color=df2_color,
+                    alpha=alpha,
+                    linewidth=linewidth,
+                    marker=marker,
+                    markersize=marker_size,
+                )
+
+        # ---------------- mean lines ----------------
+        if show_mean:
+            df1_mean = plot_df1.mean(axis=0).to_numpy(dtype=float)
+            df2_mean = plot_df2.mean(axis=0).to_numpy(dtype=float)
+
+            ax.plot(
+                x,
+                df1_mean,
+                color=df1_color,
+                linewidth=mean_linewidth,
+                marker=marker,
+                markersize=marker_size,
+                label=df1_label,
+            )
+
+            ax.plot(
+                x,
+                df2_mean,
+                color=df2_color,
+                linewidth=mean_linewidth,
+                marker=marker,
+                markersize=marker_size,
+                label=df2_label,
+            )
+
+        # x axis
+        if xlim is None:
+            ax.set_xlim(x[0], x[-1])
+        else:
+            ax.set_xlim(xlim)
+
+        # y axis
+        if ylim is None:
+            ax.set_ylim(auto_ylim)
+            ax.set_yticks(auto_yticks)
+
+            if ytick_decimals is not None:
+                ax.set_yticklabels(
+                    [f"{v:.{ytick_decimals}f}" for v in auto_yticks]
+                )
+
+        else:
+            ax.set_ylim(ylim)
+
+            y_bottom_manual, y_top_manual = ylim
+            y_middle_manual = (y_bottom_manual + y_top_manual) / 2
+
+            manual_ticks = [
+                y_bottom_manual,
+                y_middle_manual,
+                y_top_manual,
+            ]
+
+            ax.set_yticks(manual_ticks)
+
+            if ytick_decimals is not None:
+                ax.set_yticklabels(
+                    [f"{v:.{ytick_decimals}f}" for v in manual_ticks]
+                )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(
+            plot_df1.columns,
+            rotation=xtick_rotation,
+            fontsize=tick_label_size,
+        )
+
+        ax.set_xlabel(xlabel, fontsize=axis_label_size)
+        ax.set_ylabel(ylabel, fontsize=axis_label_size)
+
+        if title:
+            ax.set_title(title, fontsize=title_fontsize)
+
+        # tick length, width, and tick-label font size
+        ax.tick_params(
+            axis="both",
+            which="major",
+            labelsize=tick_label_size,
+            length=tick_length,
+            width=tick_width,
+        )
+
+        # spines
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        ax.spines["left"].set_linewidth(axis_linewidth)
+        ax.spines["bottom"].set_linewidth(axis_linewidth)
+
+        # offset x and y axes so they do not touch
+        x0, x1 = ax.get_xlim()
+        y0, y1 = ax.get_ylim()
+
+        x_offset = y_axis_x_offset_frac * (x1 - x0)
+        y_offset = x_axis_y_offset_frac * (y1 - y0)
+
+        ax.spines["left"].set_position(("data", x0 - x_offset))
+        ax.spines["bottom"].set_position(("data", y0 - y_offset))
+
+        ax.yaxis.set_ticks_position("left")
+        ax.xaxis.set_ticks_position("bottom")
+
+        if show_legend and show_mean:
+            ax.legend(
+                frameon=False,
+                fontsize=legend_fontsize,
+            )
+
+        fig.tight_layout()
+
+        if save_svg is not None:
+            save_svg = Path(save_svg)
+            save_svg.parent.mkdir(parents=True, exist_ok=True)
+
+            fig.savefig(
+                save_svg,
+                format="svg",
+                bbox_inches="tight",
+                transparent=True,
+                metadata={
+                    "Creator": "plot_two_dfs_each_row_as_line"
+                },
+            )
+
+        if save_png is not None:
+            save_png = Path(save_png)
+            save_png.parent.mkdir(parents=True, exist_ok=True)
+
+            fig.savefig(
+                save_png,
+                format="png",
+                dpi=300,
+                bbox_inches="tight",
+                transparent=True,
+                metadata={
+                    "Creator": "plot_two_dfs_each_row_as_line"
+                },
+            )
+
+        plt.show()
 
 
 
@@ -1684,7 +2221,7 @@ def plot_each_cell_two_lines(
     df2: pd.DataFrame,
     *,
     df1_color: str = "tab:blue",
-    df2_color: str = "purple",
+    df2_color: str = "tab:purple",
     df1_label: str = "axon",
     df2_label: str = "dendrite",
     linewidth: float = 2,
