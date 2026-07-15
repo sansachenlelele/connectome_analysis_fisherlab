@@ -4162,6 +4162,7 @@ def plot_upstream_type_totals(
     return None
 
 
+
 def plot_upstream_type_totals_by_nt(
     df: pd.DataFrame,
     neurotransmitter_df: pd.DataFrame,
@@ -4170,6 +4171,8 @@ def plot_upstream_type_totals_by_nt(
     count_col: str = "total_synapse_count",
     nt_type_col: str = "neuron_type",
     nt_col: str = "neurotransmitter",
+
+    # grouping
     nt_order: Sequence[str] = (
         "glutamate",
         "acetylcholine",
@@ -4179,38 +4182,61 @@ def plot_upstream_type_totals_by_nt(
     ),
     unsure_label: str = "unsure",
     unknown_type_label: str = "unknown",
+
+    # filtering and percentage calculation
     scale_to_100: bool = True,
+    min_percentage: float | None = None,
+
+    # colors
     colors: Optional[Mapping[str, str] | Sequence[str]] = None,
     nt_colors: Optional[Mapping[str, str]] = None,
     default_color: str = "0.7",
+
+    # labels
     title: Optional[str] = "upstream source mix by neurotransmitter",
     xlabel: Optional[str] = "upstream type",
     ylabel: Optional[str] = None,
+
+    # y axis
     ymin: float | None = 0,
     ymax: float | None = None,
     n_yticks: int = 3,
+
+    # figure and bars
     figsize: tuple[float, float] = (14, 5),
     bar_width: float = 0.55,
     bar_gap: float = 0.3,
+    group_gap: float = 0.9,
     edgecolor: str = "0.2",
     edge_lw: float = 0.8,
+
+    # percentage labels above bars
     show_labels: bool = True,
     label_fmt: str = "{:.1f}%",
     label_fontsize: float = 8,
     label_rotation: float = 0,
     label_offset_frac: float = 0.01,
+
+    # x tick labels
     xtick_rotation: float = 60,
     xtick_ha: str = "right",
+
+    # font sizes
     fontsize_axis_label: float = 12,
     fontsize_ticks: float = 10,
     fontsize_title: float = 14,
+
+    # grid
     show_grid: bool = False,
-    group_gap: float = 0.9,
+
+    # group brackets
     show_group_brackets: bool = True,
     bracket_y_frac: float = -0.55,
     bracket_h_frac: float = 0.05,
     bracket_linewidth: float = 1.5,
     bracket_fontsize: float = 10,
+
+    # layout and saving
     bottom_adjust: float = 0.45,
     save: bool = False,
     filename: str | Path = "upstream_type_totals_by_nt.svg",
@@ -4219,19 +4245,48 @@ def plot_upstream_type_totals_by_nt(
     """
     Plot upstream neuron-type contribution grouped by neurotransmitter.
 
-    Grouping rule:
-    - Merge df with neurotransmitter_df by neuron type.
-    - If neurotransmitter is exactly one of nt_order, assign that group.
-    - Otherwise assign unsure_label.
-    - Within each neurotransmitter group, sort bars by count_col high to low.
-    - Draw one bracket below the x tick labels / x-axis title for each group.
+    Grouping
+    --------
+    Neurotransmitters listed in `nt_order` are assigned to their own groups.
+    All other transmitter annotations, mixed annotations, and missing
+    annotations are assigned to `unsure_label`.
 
-    Notes:
-    - Mixed labels such as 'acetylcholine/dopamine' are treated as unsure
-      unless that exact string is included in nt_order.
-    - Types missing from neurotransmitter_df are treated as unsure.
+    Within each group, neuron types are sorted from highest to lowest
+    `count_col`.
+
+    Percentage filtering
+    --------------------
+    Percentages are calculated relative to the full, unfiltered synapse-count
+    total. If `min_percentage` is provided, rows below that percentage are
+    removed only after the percentages have been calculated. The percentages
+    are therefore not renormalized after filtering.
+
+    Examples
+    --------
+    Six groups:
+
+        nt_order=(
+            "glutamate",
+            "acetylcholine",
+            "tyramine",
+            "dopamine",
+            "octopamine",
+        )
+        unsure_label="unsure"
+
+    Three groups:
+
+        nt_order=("glutamate", "acetylcholine")
+        unsure_label="Other"
+
+    Keep only sources contributing at least 0.1%:
+
+        min_percentage=0.1
     """
 
+    # -----------------------------
+    # validate columns and arguments
+    # -----------------------------
     if type_col not in df.columns:
         raise ValueError(f"Missing type column: {type_col}")
 
@@ -4239,30 +4294,86 @@ def plot_upstream_type_totals_by_nt(
         raise ValueError(f"Missing count column: {count_col}")
 
     if nt_type_col not in neurotransmitter_df.columns:
-        raise ValueError(f"Missing neurotransmitter type column: {nt_type_col}")
+        raise ValueError(
+            f"Missing neurotransmitter type column: {nt_type_col}"
+        )
 
     if nt_col not in neurotransmitter_df.columns:
         raise ValueError(f"Missing neurotransmitter column: {nt_col}")
 
+    nt_order = list(nt_order)
+
+    if len(nt_order) != len(set(nt_order)):
+        raise ValueError("nt_order contains duplicate group names.")
+
+    if unsure_label in nt_order:
+        raise ValueError(
+            "unsure_label must not also appear in nt_order."
+        )
+
+    if min_percentage is not None:
+        min_percentage = float(min_percentage)
+
+        if min_percentage < 0:
+            raise ValueError("min_percentage must be 0 or greater.")
+
+    if n_yticks < 2:
+        raise ValueError("n_yticks must be at least 2.")
+
     # -----------------------------
-    # prepare data
+    # prepare synapse-count data
     # -----------------------------
     plot_df = df[[type_col, count_col]].copy()
-    plot_df[type_col] = plot_df[type_col].fillna(unknown_type_label)
-    plot_df[count_col] = pd.to_numeric(plot_df[count_col], errors="coerce").fillna(0)
 
+    plot_df[type_col] = (
+        plot_df[type_col]
+        .fillna(unknown_type_label)
+        .astype(str)
+    )
+
+    plot_df[count_col] = pd.to_numeric(
+        plot_df[count_col],
+        errors="coerce",
+    ).fillna(0)
+
+    # -----------------------------
+    # prepare neurotransmitter lookup
+    # -----------------------------
     nt_lookup = neurotransmitter_df[[nt_type_col, nt_col]].copy()
-    nt_lookup[nt_type_col] = nt_lookup[nt_type_col].astype(str)
-    nt_lookup[nt_col] = nt_lookup[nt_col].astype(str)
+
+    nt_lookup[nt_type_col] = (
+        nt_lookup[nt_type_col]
+        .fillna(unknown_type_label)
+        .astype(str)
+    )
+
+    # Preserve actual missing values in nt_col instead of converting them
+    # into the literal string "nan".
+    nt_lookup[nt_col] = nt_lookup[nt_col].astype("string")
+
+    # Avoid duplicated plot rows if the lookup contains repeated neuron types.
+    duplicate_types = nt_lookup.loc[
+        nt_lookup[nt_type_col].duplicated(keep=False),
+        nt_type_col,
+    ].unique()
+
+    if len(duplicate_types) > 0:
+        raise ValueError(
+            "neurotransmitter_df contains duplicated neuron types: "
+            f"{duplicate_types.tolist()}"
+        )
 
     plot_df = plot_df.merge(
         nt_lookup,
         left_on=type_col,
         right_on=nt_type_col,
         how="left",
+        validate="many_to_one",
     )
 
-    nt_order = list(nt_order)
+    # -----------------------------
+    # assign neurotransmitter groups
+    # -----------------------------
     full_group_order = nt_order + [unsure_label]
 
     plot_df["nt_group"] = np.where(
@@ -4271,6 +4382,12 @@ def plot_upstream_type_totals_by_nt(
         unsure_label,
     )
 
+    # Convert from pandas StringDtype/object mixture to ordinary strings.
+    plot_df["nt_group"] = plot_df["nt_group"].astype(str)
+
+    # -----------------------------
+    # calculate percentage of full total
+    # -----------------------------
     total = plot_df[count_col].sum()
 
     if not np.isfinite(total) or total <= 0:
@@ -4278,15 +4395,33 @@ def plot_upstream_type_totals_by_nt(
     else:
         plot_df["fraction"] = plot_df[count_col] / total
 
-    plot_df["percentage"] = plot_df["fraction"] * (100 if scale_to_100 else 1)
+    percentage_multiplier = 100.0 if scale_to_100 else 1.0
+
+    plot_df["percentage"] = (
+        plot_df["fraction"] * percentage_multiplier
+    )
+
+    # Filter only after calculating percentage from the full total.
+    if min_percentage is not None:
+        plot_df = plot_df.loc[
+            plot_df["percentage"] >= min_percentage
+        ].copy()
+
+    if plot_df.empty:
+        raise ValueError(
+            "No rows remain after applying min_percentage="
+            f"{min_percentage}."
+        )
 
     # -----------------------------
-    # order data by NT group, then synapse count high -> low
+    # order groups and sort within groups
     # -----------------------------
     ordered_parts = []
 
     for group_name in full_group_order:
-        group_df = plot_df[plot_df["nt_group"] == group_name].copy()
+        group_df = plot_df.loc[
+            plot_df["nt_group"] == group_name
+        ].copy()
 
         if group_df.empty:
             continue
@@ -4294,15 +4429,24 @@ def plot_upstream_type_totals_by_nt(
         group_df = group_df.sort_values(
             count_col,
             ascending=False,
+            kind="stable",
         )
 
         ordered_parts.append(group_df)
 
     if not ordered_parts:
-        raise ValueError("No rows available after neurotransmitter grouping.")
+        raise ValueError(
+            "No rows available after neurotransmitter grouping."
+        )
 
-    ordered_df = pd.concat(ordered_parts, ignore_index=True)
+    ordered_df = pd.concat(
+        ordered_parts,
+        ignore_index=True,
+    )
 
+    # -----------------------------
+    # default y-axis label
+    # -----------------------------
     if ylabel is None:
         ylabel = (
             "percentage of total synapse count"
@@ -4311,36 +4455,50 @@ def plot_upstream_type_totals_by_nt(
         )
 
     # -----------------------------
-    # x positions with larger gaps between NT groups
+    # create x positions
     # -----------------------------
     x_positions = []
     group_ranges = {}
-
     current_x = 0.0
 
-    for group_name in full_group_order:
-        group_indices = ordered_df.index[ordered_df["nt_group"] == group_name].tolist()
+    within_group_step = 1.0 + float(bar_gap)
 
-        if not group_indices:
+    for group_name in full_group_order:
+        n_group = int(
+            (ordered_df["nt_group"] == group_name).sum()
+        )
+
+        if n_group == 0:
             continue
 
         group_xs = []
 
-        for idx in group_indices:
+        for _ in range(n_group):
             x_positions.append(current_x)
             group_xs.append(current_x)
-            current_x += 1.0 + float(bar_gap)
+            current_x += within_group_step
 
-        group_ranges[group_name] = (min(group_xs), max(group_xs))
+        group_ranges[group_name] = (
+            group_xs[0],
+            group_xs[-1],
+        )
 
         current_x += float(group_gap)
 
-    x = np.array(x_positions, dtype=float)
+    x = np.asarray(x_positions, dtype=float)
 
-    used_width = min(bar_width, (1.0 + float(bar_gap)) * 0.9)
+    if len(x) != len(ordered_df):
+        raise RuntimeError(
+            "Internal error: x-position count does not match ordered data."
+        )
+
+    used_width = min(
+        float(bar_width),
+        within_group_step * 0.9,
+    )
 
     # -----------------------------
-    # colors
+    # assign colors
     # -----------------------------
     if nt_colors is None:
         nt_colors = {}
@@ -4350,15 +4508,28 @@ def plot_upstream_type_totals_by_nt(
             nt_colors.get(group, default_color)
             for group in ordered_df["nt_group"]
         ]
-    elif isinstance(colors, dict):
+
+    elif isinstance(colors, Mapping):
         bar_colors = [
-            colors.get(t, nt_colors.get(group, default_color))
-            for t, group in zip(ordered_df[type_col], ordered_df["nt_group"])
+            colors.get(
+                neuron_type,
+                nt_colors.get(group, default_color),
+            )
+            for neuron_type, group in zip(
+                ordered_df[type_col],
+                ordered_df["nt_group"],
+            )
         ]
+
     else:
         color_list = list(colors)
+
+        if len(color_list) == 0:
+            raise ValueError("colors cannot be an empty sequence.")
+
         bar_colors = (
-            color_list * (len(ordered_df) // len(color_list) + 1)
+            color_list
+            * (len(ordered_df) // len(color_list) + 1)
         )[:len(ordered_df)]
 
     # -----------------------------
@@ -4376,6 +4547,7 @@ def plot_upstream_type_totals_by_nt(
             linewidth=edge_lw,
         )
 
+        # x-axis ticks
         ax.set_xticks(x)
         ax.set_xticklabels(
             ordered_df[type_col],
@@ -4384,47 +4556,96 @@ def plot_upstream_type_totals_by_nt(
             fontsize=fontsize_ticks,
         )
 
-        ax.set_xlabel(xlabel or "", fontsize=fontsize_axis_label, labelpad=40,)
-        ax.set_ylabel(ylabel, fontsize=fontsize_axis_label)
+        # labels and title
+        ax.set_xlabel(
+            xlabel or "",
+            fontsize=fontsize_axis_label,
+            labelpad=40,
+        )
+
+        ax.set_ylabel(
+            ylabel,
+            fontsize=fontsize_axis_label,
+        )
 
         if title:
-            ax.set_title(title, fontsize=fontsize_title, pad=10)
+            ax.set_title(
+                title,
+                fontsize=fontsize_title,
+                pad=10,
+            )
 
+        # remove top/right box edges
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-        # y-axis control
-        ymin_use = 0 if ymin is None else ymin
+        # y-axis range
+        ymin_use = 0 if ymin is None else float(ymin)
 
-        if ymax is not None:
-            ymax_use = ymax
+        if ymax is None:
+            _, automatic_high = ax.get_ylim()
+            ymax_use = float(automatic_high)
         else:
-            _, current_high = ax.get_ylim()
-            ymax_use = current_high
+            ymax_use = float(ymax)
+
+        if ymax_use <= ymin_use:
+            raise ValueError(
+                "ymax must be greater than ymin."
+            )
 
         ax.set_ylim(ymin_use, ymax_use)
-        ax.set_yticks(np.linspace(ymin_use, ymax_use, n_yticks))
-        ax.spines["left"].set_bounds(ymin_use, ymax_use)
 
-        for tick in ax.get_yticklabels():
-            tick.set_fontsize(fontsize_ticks)
+        # evenly spaced y-axis ticks
+        ax.set_yticks(
+            np.linspace(
+                ymin_use,
+                ymax_use,
+                int(n_yticks),
+            )
+        )
+
+        # make the y-axis spine stop at the selected range
+        ax.spines["left"].set_bounds(
+            ymin_use,
+            ymax_use,
+        )
+
+        ax.tick_params(
+            axis="both",
+            labelsize=fontsize_ticks,
+        )
 
         if show_grid:
-            ax.grid(True, axis="y", alpha=0.2, linewidth=0.8)
+            ax.grid(
+                True,
+                axis="y",
+                alpha=0.2,
+                linewidth=0.8,
+            )
 
-        ax.set_xlim(x[0] - 0.7, x[-1] + 0.7)
+        # retain normal margins around the first and last bars
+        ax.set_xlim(
+            x[0] - 0.7,
+            x[-1] + 0.7,
+        )
 
-        # value labels
+        # -----------------------------
+        # percentage labels above bars
+        # -----------------------------
         if show_labels:
-            label_vals = ordered_df["percentage"].to_numpy()
-            ylim = ax.get_ylim()
-            y_off = label_offset_frac * (ylim[1] - ylim[0])
+            y_off = (
+                label_offset_frac
+                * (ymax_use - ymin_use)
+            )
 
-            for bar, v in zip(bars, label_vals):
+            for bar, value in zip(
+                bars,
+                ordered_df["percentage"],
+            ):
                 ax.text(
                     bar.get_x() + bar.get_width() / 2,
                     bar.get_height() + y_off,
-                    label_fmt.format(v),
+                    label_fmt.format(value),
                     ha="center",
                     va="bottom",
                     fontsize=label_fontsize,
@@ -4432,11 +4653,17 @@ def plot_upstream_type_totals_by_nt(
                     clip_on=False,
                 )
 
-        # group brackets all on the same level, below x tick labels and x-axis title
+        # -----------------------------
+        # neurotransmitter brackets
+        # -----------------------------
         if show_group_brackets:
             trans = ax.get_xaxis_transform()
 
-            for group_name, (x_start, x_end) in group_ranges.items():
+            for group_name in full_group_order:
+                if group_name not in group_ranges:
+                    continue
+
+                x_start, x_end = group_ranges[group_name]
                 y0 = bracket_y_frac
                 h = bracket_h_frac
 
@@ -4462,320 +4689,24 @@ def plot_upstream_type_totals_by_nt(
 
         fig.subplots_adjust(bottom=bottom_adjust)
 
+        # -----------------------------
+        # save
+        # -----------------------------
         if save:
             out = Path(filename)
-            out.parent.mkdir(parents=True, exist_ok=True)
+            out.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
             fig.savefig(
                 out,
                 format="svg",
                 bbox_inches="tight",
                 transparent=True,
-                metadata={"Creator": "plot_upstream_type_totals_by_nt"},
-            )
-
-        plt.show()
-
-    if return_ordered_df:
-        return ordered_df
-
-    return None
-
-
-def plot_upstream_type_totals_by_nt_new(
-    df: pd.DataFrame,
-    neurotransmitter_df: pd.DataFrame,
-    *,
-    type_col: str = "upstream_type",
-    count_col: str = "total_synapse_count",
-    nt_type_col: str = "neuron_type",
-    nt_col: str = "neurotransmitter",
-    scale_to_100: bool = True,
-    colors: Optional[Mapping[str, str] | Sequence[str]] = None,
-    nt_colors: Optional[Mapping[str, str]] = None,
-    default_color: str = "0.7",
-    title: Optional[str] = "upstream source mix by neurotransmitter",
-    xlabel: Optional[str] = "upstream type",
-    ylabel: Optional[str] = None,
-    ymin: float | None = 0,
-    ymax: float | None = None,
-    n_yticks: int = 3,
-    figsize: tuple[float, float] = (14, 5),
-    bar_width: float = 0.55,
-    bar_gap: float = 0.3,
-    edgecolor: str = "0.2",
-    edge_lw: float = 0.8,
-    show_labels: bool = True,
-    label_fmt: str = "{:.1f}%",
-    label_fontsize: float = 8,
-    label_rotation: float = 0,
-    label_offset_frac: float = 0.01,
-    xtick_rotation: float = 60,
-    xtick_ha: str = "right",
-    fontsize_axis_label: float = 12,
-    fontsize_ticks: float = 10,
-    fontsize_title: float = 14,
-    show_grid: bool = False,
-    group_gap: float = 0.9,
-    show_group_brackets: bool = True,
-    bracket_y_frac: float = -0.55,
-    bracket_h_frac: float = 0.05,
-    bracket_linewidth: float = 1.5,
-    bracket_fontsize: float = 10,
-    bottom_adjust: float = 0.45,
-    save: bool = False,
-    filename: str | Path = "upstream_type_totals_by_nt.svg",
-    return_ordered_df: bool = True,
-) -> pd.DataFrame | None:
-
-    if type_col not in df.columns:
-        raise ValueError(f"Missing type column: {type_col}")
-
-    if count_col not in df.columns:
-        raise ValueError(f"Missing count column: {count_col}")
-
-    if nt_type_col not in neurotransmitter_df.columns:
-        raise ValueError(f"Missing neurotransmitter type column: {nt_type_col}")
-
-    if nt_col not in neurotransmitter_df.columns:
-        raise ValueError(f"Missing neurotransmitter column: {nt_col}")
-
-    # -----------------------------
-    # prepare data
-    # -----------------------------
-    plot_df = df[[type_col, count_col]].copy()
-    plot_df[type_col] = plot_df[type_col].fillna("unknown")
-    plot_df[count_col] = pd.to_numeric(plot_df[count_col], errors="coerce").fillna(0)
-
-    nt_lookup = neurotransmitter_df[[nt_type_col, nt_col]].copy()
-    nt_lookup[nt_type_col] = nt_lookup[nt_type_col].astype(str)
-    nt_lookup[nt_col] = nt_lookup[nt_col].astype(str)
-
-    plot_df = plot_df.merge(
-        nt_lookup,
-        left_on=type_col,
-        right_on=nt_type_col,
-        how="left",
-    )
-
-    # -----------------------------
-    # NEW grouping
-    # -----------------------------
-    plot_df["nt_group"] = np.where(
-        plot_df[nt_col] == "glutamate",
-        "glutamate",
-        np.where(
-            plot_df[nt_col] == "acetylcholine",
-            "acetylcholine",
-            "Other",
-        ),
-    )
-
-    full_group_order = [
-        "glutamate",
-        "acetylcholine",
-        "Other",
-    ]
-
-    total = plot_df[count_col].sum()
-
-    if not np.isfinite(total) or total <= 0:
-        plot_df["fraction"] = 0.0
-    else:
-        plot_df["fraction"] = plot_df[count_col] / total
-
-    plot_df["percentage"] = plot_df["fraction"] * (100 if scale_to_100 else 1)
-
-    # -----------------------------
-    # sort within each group
-    # -----------------------------
-    ordered_parts = []
-
-    for group_name in full_group_order:
-        group_df = plot_df[plot_df["nt_group"] == group_name].copy()
-
-        if group_df.empty:
-            continue
-
-        group_df = group_df.sort_values(
-            count_col,
-            ascending=False,
-        )
-
-        ordered_parts.append(group_df)
-
-    if not ordered_parts:
-        raise ValueError("No rows available after grouping.")
-
-    ordered_df = pd.concat(ordered_parts, ignore_index=True)
-
-    if ylabel is None:
-        ylabel = (
-            "percentage of total synapse count"
-            if scale_to_100
-            else "fraction of total synapse count"
-        )
-
-    # -----------------------------
-    # x positions
-    # -----------------------------
-    x_positions = []
-    group_ranges = {}
-
-    current_x = 0.0
-
-    for group_name in full_group_order:
-        group_indices = ordered_df.index[
-            ordered_df["nt_group"] == group_name
-        ].tolist()
-
-        if not group_indices:
-            continue
-
-        xs = []
-
-        for idx in group_indices:
-            x_positions.append(current_x)
-            xs.append(current_x)
-            current_x += 1.0 + float(bar_gap)
-
-        group_ranges[group_name] = (min(xs), max(xs))
-
-        current_x += float(group_gap)
-
-    x = np.asarray(x_positions)
-
-    used_width = min(bar_width, (1.0 + bar_gap) * 0.9)
-
-    # -----------------------------
-    # colors
-    # -----------------------------
-    if nt_colors is None:
-        nt_colors = {}
-
-    if colors is None:
-        bar_colors = [
-            nt_colors.get(group, default_color)
-            for group in ordered_df["nt_group"]
-        ]
-    elif isinstance(colors, dict):
-        bar_colors = [
-            colors.get(t, nt_colors.get(group, default_color))
-            for t, group in zip(
-                ordered_df[type_col],
-                ordered_df["nt_group"],
-            )
-        ]
-    else:
-        color_list = list(colors)
-        bar_colors = (
-            color_list * (len(ordered_df) // len(color_list) + 1)
-        )[:len(ordered_df)]
-
-    # -----------------------------
-    # plot
-    # -----------------------------
-    with mpl.rc_context({"svg.fonttype": "none"}):
-        fig, ax = plt.subplots(figsize=figsize)
-
-        bars = ax.bar(
-            x,
-            ordered_df["percentage"],
-            width=used_width,
-            color=bar_colors,
-            edgecolor=edgecolor,
-            linewidth=edge_lw,
-        )
-
-        ax.set_xticks(x)
-        ax.set_xticklabels(
-            ordered_df[type_col],
-            rotation=xtick_rotation,
-            ha=xtick_ha,
-            fontsize=fontsize_ticks,
-        )
-
-        ax.set_xlabel(xlabel or "", fontsize=fontsize_axis_label, labelpad=40)
-        ax.set_ylabel(ylabel, fontsize=fontsize_axis_label)
-
-        if title:
-            ax.set_title(title, fontsize=fontsize_title, pad=10)
-
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-
-        ymin_use = 0 if ymin is None else ymin
-
-        if ymax is None:
-            _, ymax_use = ax.get_ylim()
-        else:
-            ymax_use = ymax
-
-        ax.set_ylim(ymin_use, ymax_use)
-        ax.set_yticks(np.linspace(ymin_use, ymax_use, n_yticks))
-        ax.spines["left"].set_bounds(ymin_use, ymax_use)
-
-        for tick in ax.get_yticklabels():
-            tick.set_fontsize(fontsize_ticks)
-
-        if show_grid:
-            ax.grid(True, axis="y", alpha=0.2, linewidth=0.8)
-
-        ax.set_xlim(x[0] - 0.7, x[-1] + 0.7)
-
-        if show_labels:
-            ylim = ax.get_ylim()
-            y_off = label_offset_frac * (ylim[1] - ylim[0])
-
-            for bar, v in zip(bars, ordered_df["percentage"]):
-                ax.text(
-                    bar.get_x() + bar.get_width()/2,
-                    bar.get_height() + y_off,
-                    label_fmt.format(v),
-                    ha="center",
-                    va="bottom",
-                    fontsize=label_fontsize,
-                    rotation=label_rotation,
-                    clip_on=False,
-                )
-
-        if show_group_brackets:
-            trans = ax.get_xaxis_transform()
-
-            for group_name, (x_start, x_end) in group_ranges.items():
-                y0 = bracket_y_frac
-                h = bracket_h_frac
-
-                ax.plot(
-                    [x_start, x_start, x_end, x_end],
-                    [y0+h, y0, y0, y0+h],
-                    color="black",
-                    linewidth=bracket_linewidth,
-                    transform=trans,
-                    clip_on=False,
-                )
-
-                ax.text(
-                    (x_start+x_end)/2,
-                    y0-h*0.9,
-                    group_name,
-                    ha="center",
-                    va="top",
-                    fontsize=bracket_fontsize,
-                    transform=trans,
-                    clip_on=False,
-                )
-
-        fig.subplots_adjust(bottom=bottom_adjust)
-
-        if save:
-            out = Path(filename)
-            out.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(
-                out,
-                format="svg",
-                bbox_inches="tight",
-                transparent=True,
-                metadata={"Creator": "plot_upstream_type_totals_by_nt"},
+                metadata={
+                    "Creator": "plot_upstream_type_totals_by_nt"
+                },
             )
 
         plt.show()
