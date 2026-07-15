@@ -4479,3 +4479,308 @@ def plot_upstream_type_totals_by_nt(
         return ordered_df
 
     return None
+
+
+def plot_upstream_type_totals_by_nt_new(
+    df: pd.DataFrame,
+    neurotransmitter_df: pd.DataFrame,
+    *,
+    type_col: str = "upstream_type",
+    count_col: str = "total_synapse_count",
+    nt_type_col: str = "neuron_type",
+    nt_col: str = "neurotransmitter",
+    scale_to_100: bool = True,
+    colors: Optional[Mapping[str, str] | Sequence[str]] = None,
+    nt_colors: Optional[Mapping[str, str]] = None,
+    default_color: str = "0.7",
+    title: Optional[str] = "upstream source mix by neurotransmitter",
+    xlabel: Optional[str] = "upstream type",
+    ylabel: Optional[str] = None,
+    ymin: float | None = 0,
+    ymax: float | None = None,
+    n_yticks: int = 3,
+    figsize: tuple[float, float] = (14, 5),
+    bar_width: float = 0.55,
+    bar_gap: float = 0.3,
+    edgecolor: str = "0.2",
+    edge_lw: float = 0.8,
+    show_labels: bool = True,
+    label_fmt: str = "{:.1f}%",
+    label_fontsize: float = 8,
+    label_rotation: float = 0,
+    label_offset_frac: float = 0.01,
+    xtick_rotation: float = 60,
+    xtick_ha: str = "right",
+    fontsize_axis_label: float = 12,
+    fontsize_ticks: float = 10,
+    fontsize_title: float = 14,
+    show_grid: bool = False,
+    group_gap: float = 0.9,
+    show_group_brackets: bool = True,
+    bracket_y_frac: float = -0.55,
+    bracket_h_frac: float = 0.05,
+    bracket_linewidth: float = 1.5,
+    bracket_fontsize: float = 10,
+    bottom_adjust: float = 0.45,
+    save: bool = False,
+    filename: str | Path = "upstream_type_totals_by_nt.svg",
+    return_ordered_df: bool = True,
+) -> pd.DataFrame | None:
+
+    if type_col not in df.columns:
+        raise ValueError(f"Missing type column: {type_col}")
+
+    if count_col not in df.columns:
+        raise ValueError(f"Missing count column: {count_col}")
+
+    if nt_type_col not in neurotransmitter_df.columns:
+        raise ValueError(f"Missing neurotransmitter type column: {nt_type_col}")
+
+    if nt_col not in neurotransmitter_df.columns:
+        raise ValueError(f"Missing neurotransmitter column: {nt_col}")
+
+    # -----------------------------
+    # prepare data
+    # -----------------------------
+    plot_df = df[[type_col, count_col]].copy()
+    plot_df[type_col] = plot_df[type_col].fillna("unknown")
+    plot_df[count_col] = pd.to_numeric(plot_df[count_col], errors="coerce").fillna(0)
+
+    nt_lookup = neurotransmitter_df[[nt_type_col, nt_col]].copy()
+    nt_lookup[nt_type_col] = nt_lookup[nt_type_col].astype(str)
+    nt_lookup[nt_col] = nt_lookup[nt_col].astype(str)
+
+    plot_df = plot_df.merge(
+        nt_lookup,
+        left_on=type_col,
+        right_on=nt_type_col,
+        how="left",
+    )
+
+    # -----------------------------
+    # NEW grouping
+    # -----------------------------
+    plot_df["nt_group"] = np.where(
+        plot_df[nt_col] == "glutamate",
+        "glutamate",
+        np.where(
+            plot_df[nt_col] == "acetylcholine",
+            "acetylcholine",
+            "Other",
+        ),
+    )
+
+    full_group_order = [
+        "glutamate",
+        "acetylcholine",
+        "Other",
+    ]
+
+    total = plot_df[count_col].sum()
+
+    if not np.isfinite(total) or total <= 0:
+        plot_df["fraction"] = 0.0
+    else:
+        plot_df["fraction"] = plot_df[count_col] / total
+
+    plot_df["percentage"] = plot_df["fraction"] * (100 if scale_to_100 else 1)
+
+    # -----------------------------
+    # sort within each group
+    # -----------------------------
+    ordered_parts = []
+
+    for group_name in full_group_order:
+        group_df = plot_df[plot_df["nt_group"] == group_name].copy()
+
+        if group_df.empty:
+            continue
+
+        group_df = group_df.sort_values(
+            count_col,
+            ascending=False,
+        )
+
+        ordered_parts.append(group_df)
+
+    if not ordered_parts:
+        raise ValueError("No rows available after grouping.")
+
+    ordered_df = pd.concat(ordered_parts, ignore_index=True)
+
+    if ylabel is None:
+        ylabel = (
+            "percentage of total synapse count"
+            if scale_to_100
+            else "fraction of total synapse count"
+        )
+
+    # -----------------------------
+    # x positions
+    # -----------------------------
+    x_positions = []
+    group_ranges = {}
+
+    current_x = 0.0
+
+    for group_name in full_group_order:
+        group_indices = ordered_df.index[
+            ordered_df["nt_group"] == group_name
+        ].tolist()
+
+        if not group_indices:
+            continue
+
+        xs = []
+
+        for idx in group_indices:
+            x_positions.append(current_x)
+            xs.append(current_x)
+            current_x += 1.0 + float(bar_gap)
+
+        group_ranges[group_name] = (min(xs), max(xs))
+
+        current_x += float(group_gap)
+
+    x = np.asarray(x_positions)
+
+    used_width = min(bar_width, (1.0 + bar_gap) * 0.9)
+
+    # -----------------------------
+    # colors
+    # -----------------------------
+    if nt_colors is None:
+        nt_colors = {}
+
+    if colors is None:
+        bar_colors = [
+            nt_colors.get(group, default_color)
+            for group in ordered_df["nt_group"]
+        ]
+    elif isinstance(colors, dict):
+        bar_colors = [
+            colors.get(t, nt_colors.get(group, default_color))
+            for t, group in zip(
+                ordered_df[type_col],
+                ordered_df["nt_group"],
+            )
+        ]
+    else:
+        color_list = list(colors)
+        bar_colors = (
+            color_list * (len(ordered_df) // len(color_list) + 1)
+        )[:len(ordered_df)]
+
+    # -----------------------------
+    # plot
+    # -----------------------------
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        fig, ax = plt.subplots(figsize=figsize)
+
+        bars = ax.bar(
+            x,
+            ordered_df["percentage"],
+            width=used_width,
+            color=bar_colors,
+            edgecolor=edgecolor,
+            linewidth=edge_lw,
+        )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(
+            ordered_df[type_col],
+            rotation=xtick_rotation,
+            ha=xtick_ha,
+            fontsize=fontsize_ticks,
+        )
+
+        ax.set_xlabel(xlabel or "", fontsize=fontsize_axis_label, labelpad=40)
+        ax.set_ylabel(ylabel, fontsize=fontsize_axis_label)
+
+        if title:
+            ax.set_title(title, fontsize=fontsize_title, pad=10)
+
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        ymin_use = 0 if ymin is None else ymin
+
+        if ymax is None:
+            _, ymax_use = ax.get_ylim()
+        else:
+            ymax_use = ymax
+
+        ax.set_ylim(ymin_use, ymax_use)
+        ax.set_yticks(np.linspace(ymin_use, ymax_use, n_yticks))
+        ax.spines["left"].set_bounds(ymin_use, ymax_use)
+
+        for tick in ax.get_yticklabels():
+            tick.set_fontsize(fontsize_ticks)
+
+        if show_grid:
+            ax.grid(True, axis="y", alpha=0.2, linewidth=0.8)
+
+        ax.set_xlim(x[0] - 0.7, x[-1] + 0.7)
+
+        if show_labels:
+            ylim = ax.get_ylim()
+            y_off = label_offset_frac * (ylim[1] - ylim[0])
+
+            for bar, v in zip(bars, ordered_df["percentage"]):
+                ax.text(
+                    bar.get_x() + bar.get_width()/2,
+                    bar.get_height() + y_off,
+                    label_fmt.format(v),
+                    ha="center",
+                    va="bottom",
+                    fontsize=label_fontsize,
+                    rotation=label_rotation,
+                    clip_on=False,
+                )
+
+        if show_group_brackets:
+            trans = ax.get_xaxis_transform()
+
+            for group_name, (x_start, x_end) in group_ranges.items():
+                y0 = bracket_y_frac
+                h = bracket_h_frac
+
+                ax.plot(
+                    [x_start, x_start, x_end, x_end],
+                    [y0+h, y0, y0, y0+h],
+                    color="black",
+                    linewidth=bracket_linewidth,
+                    transform=trans,
+                    clip_on=False,
+                )
+
+                ax.text(
+                    (x_start+x_end)/2,
+                    y0-h*0.9,
+                    group_name,
+                    ha="center",
+                    va="top",
+                    fontsize=bracket_fontsize,
+                    transform=trans,
+                    clip_on=False,
+                )
+
+        fig.subplots_adjust(bottom=bottom_adjust)
+
+        if save:
+            out = Path(filename)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(
+                out,
+                format="svg",
+                bbox_inches="tight",
+                transparent=True,
+                metadata={"Creator": "plot_upstream_type_totals_by_nt"},
+            )
+
+        plt.show()
+
+    if return_ordered_df:
+        return ordered_df
+
+    return None
