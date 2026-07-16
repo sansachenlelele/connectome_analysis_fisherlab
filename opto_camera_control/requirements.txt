@@ -5,7 +5,7 @@
 #
 PySide6
 nidaqmx
-numpy
+numpy<2  # PySpin 4.3 is compiled against NumPy 1.x; NumPy 2 crashes its import
 
 # PySpin is NOT on PyPI. Install the Spinnaker 4.3 Python wheel that matches
 # this interpreter (cp310) and OS (win_amd64), downloaded from Teledyne:

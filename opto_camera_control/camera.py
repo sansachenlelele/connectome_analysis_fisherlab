@@ -17,6 +17,8 @@ venv, not the rig's system 3.13.
 
 from __future__ import annotations
 
+import glob
+import os
 import threading
 import time
 from typing import Callable, Optional
@@ -92,6 +94,9 @@ class Camera:
 
         self._stop_event = threading.Event()
         self._record_thread: Optional[threading.Thread] = None
+        # Actual video file(s) produced by the last recording (see the note in
+        # _record_worker about SpinVideo's -NNNN chunk suffix).
+        self._video_files: list[str] = []
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -303,8 +308,34 @@ class Camera:
                 video.Close()
             except PySpin.SpinnakerException:
                 pass
+            self._video_files = self._resolve_video_files(output_basepath)
             if on_finished is not None:
                 on_finished(completed, written, incomplete)
+
+    def _resolve_video_files(self, output_basepath: str) -> list[str]:
+        """Return the AVI file(s) SpinVideo actually wrote.
+
+        SpinVideo appends a ``-NNNN`` chunk index and ``.avi`` to the base name
+        (splitting into multiple files past its max file size). For the common
+        single-chunk case we rename ``<base>-0000.avi`` to a clean
+        ``<base>.avi`` so the video filename is predictable for SLEAP; multiple
+        chunks are left as-is and all reported.
+        """
+        chunks = sorted(glob.glob(f"{output_basepath}-*.avi"))
+        if len(chunks) == 1:
+            final = f"{output_basepath}.avi"
+            try:
+                os.replace(chunks[0], final)
+                return [final]
+            except OSError:
+                return chunks
+        if not chunks and os.path.exists(f"{output_basepath}.avi"):
+            return [f"{output_basepath}.avi"]
+        return chunks
+
+    @property
+    def video_files(self) -> list[str]:
+        return list(self._video_files)
 
     def stop(self) -> None:
         """Signal the recording thread to stop and wait for it to finish."""

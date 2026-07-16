@@ -14,6 +14,7 @@ those SDKs, showing a clear error instead of failing at import.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from datetime import datetime
@@ -149,8 +150,13 @@ class RecordingController:
             if self._led is not None:
                 self._led.stop()
             if self._logger is not None:
+                video_files = (
+                    [os.path.basename(p) for p in self._camera.video_files]
+                    if self._camera is not None
+                    else []
+                )
                 meta_path = self._logger.finalize(
-                    extra_meta={"completed": completed}
+                    extra_meta={"completed": completed, "video_files": video_files}
                 )
                 self.result_summary = (
                     f"{'Completed' if completed else 'Stopped'}: "
