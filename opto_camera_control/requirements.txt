@@ -1,0 +1,13 @@
+# opto_camera_control dependencies (install into the Python 3.10 venv)
+#
+#   py -3.10 -m venv opto_camera_control/.venv310
+#   opto_camera_control/.venv310/Scripts/python -m pip install -r opto_camera_control/requirements.txt
+#
+PySide6
+nidaqmx
+numpy
+
+# PySpin is NOT on PyPI. Install the Spinnaker 4.3 Python wheel that matches
+# this interpreter (cp310) and OS (win_amd64), downloaded from Teledyne:
+#   Vision Solutions -> Support -> Downloads -> Spinnaker SDK -> "Python"
+# e.g.:  pip install spinnaker_python-4.3.0.190-cp310-cp310-win_amd64.whl
