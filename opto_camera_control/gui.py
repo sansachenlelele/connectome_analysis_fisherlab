@@ -409,7 +409,7 @@ class MainWindow(QMainWindow):
         self.sync_group.addButton(self.sync_software)
         self.sync_group.addButton(self.sync_hardware)
 
-        self.device = QLineEdit("Dev1")
+        self.device = QLineEdit("Dev2")
         self.ao_channel = QLineEdit("ao0")
 
         form.addRow(self.sync_software)
