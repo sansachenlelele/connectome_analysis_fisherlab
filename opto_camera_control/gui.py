@@ -85,6 +85,7 @@ class RecordingController:
         device: str,
         ao_channel: str,
         sync_mode: str,
+        current_limit_ma: float,
     ) -> None:
         # Lazy imports so the GUI can open without PySpin/nidaqmx present.
         from led_daq import LedController
@@ -94,7 +95,11 @@ class RecordingController:
         self.result_summary = None
         self._finalized = False
 
-        led = LedController(device=device, ao_channel=ao_channel)
+        led = LedController(
+            device=device,
+            ao_channel=ao_channel,
+            current_limit_ma=current_limit_ma,
+        )
         led.open()
 
         # Camera is owned by the window (shared with live preview) and is
@@ -112,6 +117,7 @@ class RecordingController:
                 "n_frames": n_frames,
                 "daq_device": device,
                 "ao_channel": ao_channel,
+                "led_current_limit_ma": current_limit_ma,
                 "sync_mode": sync_mode,
                 "timeline": {
                     "repeat_count": timeline.repeat_count,
@@ -889,13 +895,25 @@ class MainWindow(QMainWindow):
         # --- Manual LED test (live brightness tuning) ---
         form.addRow(QLabel("<b>Manual LED test</b> (LEDD1B in MOD mode)"))
 
+        # Current-limit dial value: makes the mA figures equal true LED current.
+        self.current_limit = QSpinBox()
+        self.current_limit.setRange(1, MAX_LED_MA)
+        self.current_limit.setSuffix(" mA")
+        self.current_limit.setValue(900)
+        self.current_limit.setToolTip(
+            "Set this to match the LEDD1B front-panel current-limit dial. Then "
+            "the mA values below equal the actual LED current (max = this)."
+        )
+        self.current_limit.valueChanged.connect(self._on_current_limit_changed)
+        form.addRow("LED current limit (dial):", self.current_limit)
+
         self.led_slider = QSlider(Qt.Orientation.Horizontal)
-        self.led_slider.setRange(0, MAX_LED_MA)
+        self.led_slider.setRange(0, self.current_limit.value())
         self.led_slider.setValue(500)
         self.led_slider.valueChanged.connect(self._on_led_value_changed)
 
         self.led_spin = QSpinBox()
-        self.led_spin.setRange(0, MAX_LED_MA)
+        self.led_spin.setRange(0, self.current_limit.value())
         self.led_spin.setSuffix(" mA")
         self.led_spin.setValue(500)
         self.led_spin.valueChanged.connect(self._on_led_value_changed)
@@ -937,6 +955,17 @@ class MainWindow(QMainWindow):
 
     # -- Manual LED control --------------------------------------------------
 
+    def _on_current_limit_changed(self, limit: int) -> None:
+        # The dial limit is the true full-scale current, so it caps the
+        # brightness range and rescales the voltage mapping.
+        for w in (self.led_slider, self.led_spin):
+            w.blockSignals(True)
+            w.setMaximum(limit)
+            w.blockSignals(False)
+        if self._manual_led is not None:
+            self._manual_led.current_limit_ma = float(limit)
+        self._on_led_value_changed(self.led_spin.value())
+
     def _on_led_value_changed(self, value: int) -> None:
         # Keep slider and spinbox in sync without recursing.
         for w in (self.led_slider, self.led_spin):
@@ -944,10 +973,11 @@ class MainWindow(QMainWindow):
                 w.blockSignals(True)
                 w.setValue(value)
                 w.blockSignals(False)
-        volts = ma_to_voltage(value)
-        pct = 100.0 * value / MAX_LED_MA
+        limit = self.current_limit.value()
+        volts = ma_to_voltage(value, limit)
+        pct = 100.0 * value / limit if limit else 0.0
         self.led_readout.setText(
-            f"→ {volts:.3f} V  (~{pct:.0f}% of the ~1 A limit)"
+            f"→ {volts:.3f} V  (~{pct:.0f}% of the {limit} mA limit)"
         )
         # If the LED is on for testing, apply the new level live.
         if self._manual_led is not None:
@@ -964,6 +994,7 @@ class MainWindow(QMainWindow):
                 led = LedController(
                     device=self.device.text().strip(),
                     ao_channel=self.ao_channel.text().strip(),
+                    current_limit_ma=float(self.current_limit.value()),
                 )
                 led.open()
                 led.set_ma(float(self.led_spin.value()))
@@ -1076,6 +1107,7 @@ class MainWindow(QMainWindow):
                 device=self.device.text().strip(),
                 ao_channel=self.ao_channel.text().strip(),
                 sync_mode="hardware" if self.sync_hardware.isChecked() else "software",
+                current_limit_ma=float(self.current_limit.value()),
             )
         except ImportError as exc:
             self._error(
@@ -1143,6 +1175,7 @@ class MainWindow(QMainWindow):
             self.ao_channel,
             self.connect_btn,
             self.preview_btn,
+            self.current_limit,
             self.led_slider,
             self.led_spin,
             self.led_test_btn,

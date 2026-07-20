@@ -28,15 +28,20 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def ma_to_voltage(ma: float) -> float:
+def ma_to_voltage(ma: float, current_limit_ma: float = CURRENT_LIMIT_MA) -> float:
     """Convert a desired LED current in mA to the AO0 command voltage.
 
-    ``V_ao0 = clamp(desired_mA / 1000.0 * 5.0, 0.0, 5.0)``
+    In LEDD1B modulation mode the LED current is ``(V/5) * current_limit``, where
+    ``current_limit`` is set by the front-panel dial. So to command ``ma`` of
+    actual current: ``V = clamp(ma / current_limit * 5, 0, 5)``.
 
-    The clamp protects the LED regardless of caller input: values above the
-    1.0 A current limit are pinned to 5.0 V (== 1000 mA) and negatives to 0 V.
+    ``current_limit_ma`` should match the physical dial (e.g. ~900 mA). It
+    defaults to 1000 mA (full scale) for backwards compatibility. The clamp
+    protects the LED: requests above the dial limit pin at 5 V (== the dial
+    current) and negatives at 0 V.
     """
-    return clamp(ma / CURRENT_LIMIT_MA * AO_MAX_VOLTS, 0.0, AO_MAX_VOLTS)
+    limit = current_limit_ma if current_limit_ma and current_limit_ma > 0 else CURRENT_LIMIT_MA
+    return clamp(ma / limit * AO_MAX_VOLTS, 0.0, AO_MAX_VOLTS)
 
 
 class StimulusError(ValueError):

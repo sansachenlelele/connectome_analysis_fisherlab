@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 import nidaqmx  # type: ignore[import-not-found]
 
-from stimulus import StimulusTimeline, ma_to_voltage
+from stimulus import CURRENT_LIMIT_MA, StimulusTimeline, ma_to_voltage
 
 #: Callback signature invoked at each timeline transition:
 #: ``(host_time_s, state, commanded_ma, voltage)``.
@@ -44,10 +44,14 @@ class LedController:
         device: str = "Dev1",
         ao_channel: str = "ao0",
         di_channel: Optional[str] = None,
+        current_limit_ma: float = CURRENT_LIMIT_MA,
     ) -> None:
         self.device = device
         self.ao_channel = ao_channel
         self.di_channel = di_channel
+        # LEDD1B front-panel current-limit dial (mA); used to convert a desired
+        # actual current to the AO command voltage. Set it to match the dial.
+        self.current_limit_ma = current_limit_ma
 
         self._ao_task: Optional[nidaqmx.Task] = None
         self._state_lock = threading.Lock()
@@ -114,7 +118,7 @@ class LedController:
             The host ``perf_counter`` timestamp (seconds) at which the write
             was issued.
         """
-        volts = ma_to_voltage(ma)
+        volts = ma_to_voltage(ma, self.current_limit_ma)
         self._write_voltage(volts)
         ts = time.perf_counter()
         on = (ma > 0.0) if state is None else state
@@ -176,7 +180,7 @@ class LedController:
                         return  # stopped; finally-block forces LED off
                 ts = self.set_ma(ma, state=state)
                 if on_transition is not None:
-                    volts = ma_to_voltage(ma)
+                    volts = ma_to_voltage(ma, self.current_limit_ma)
                     on_transition(ts, state, ma, volts)
                 if self._stop_event.is_set():
                     return

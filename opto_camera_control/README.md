@@ -11,12 +11,16 @@ rationale. This README covers setup and use.
 ## Hardware
 
 - **Camera**: FLIR Grasshopper3 `GS3-U3-41C6NIR-C` over USB3.
-- **DAQ**: NI PCIe-6351, analog output `Dev1/ao0` (confirm the device name in
-  NI MAX) wired via the BNC-2090A `AO 0` BNC to the LEDD1B `MOD IN`.
-- **LED driver**: Thorlabs LEDD1B in **Modulation mode**.
-  - ⚠️ **Set the front-panel current-limit dial to 1.0 A before use.** Software
-    cannot set this. At 1.0 A, `V_ao0 = clamp(mA/1000 * 5, 0, 5)`.
-- **LED**: Thorlabs M590L3 (590 nm, 1000 mA max).
+- **DAQ**: NI PCIe-6351 (device name `Dev2` on this rig — confirm in NI MAX),
+  analog output `Dev2/ao0` wired via the BNC-2090A `AO 0` BNC to the LEDD1B
+  `MOD IN`.
+- **LED driver**: Thorlabs LEDD1B in **Modulation mode** (mode is a physical
+  switch — software cannot read or set it; keep it on MOD).
+  - The front-panel **current-limit dial** sets full-scale current. It's set to
+    **~0.9 A** here (below the LED's 1.0 A max for margin). Enter that value in
+    the GUI's "LED current limit (dial)" field so the mA figures equal the true
+    LED current: `V_ao0 = clamp(desired_mA / current_limit_mA * 5, 0, 5)`.
+- **LED**: Thorlabs M590L3 (590 nm, **1000 mA max** forward current).
 
 ## Setup (once)
 
