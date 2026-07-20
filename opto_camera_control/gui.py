@@ -880,8 +880,11 @@ class MainWindow(QMainWindow):
 
         form.addRow(self.sync_software)
         form.addRow(self.sync_hardware)
-        form.addRow("DAQ device:", self.device)
-        form.addRow("AO channel:", self.ao_channel)
+        form.addRow("DAQ NI PCIe-6351 name:", self.device)
+        device_hint = QLabel("look this up in NI MAX software")
+        device_hint.setStyleSheet("color: #888; font-style: italic;")
+        form.addRow("", device_hint)
+        form.addRow("BNC-2090A AO channel:", self.ao_channel)
 
         # --- Manual LED test (live brightness tuning) ---
         form.addRow(QLabel("<b>Manual LED test</b> (LEDD1B in MOD mode)"))
