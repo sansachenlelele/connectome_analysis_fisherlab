@@ -24,6 +24,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
+    QSlider,
     QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
@@ -46,7 +47,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from stimulus import Interval, StimulusError, StimulusTimeline
+from stimulus import Interval, StimulusError, StimulusTimeline, ma_to_voltage
+
+MAX_LED_MA = 1000
 
 DEFAULT_OUTPUT_DIR = str(Path.home() / "Documents" / "OptoRecordings")
 
@@ -211,6 +214,11 @@ class MainWindow(QMainWindow):
         self._frame_lock = threading.Lock()
         self._latest_frame = None
         self._resume_preview_after_record = False
+
+        # Transient LED controller for the manual "LED On (test)" control. Held
+        # only while testing; released on Off and before any recording so it
+        # never contends with the recording's own AO task.
+        self._manual_led = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -523,7 +531,94 @@ class MainWindow(QMainWindow):
         form.addRow(self.sync_hardware)
         form.addRow("DAQ device:", self.device)
         form.addRow("AO channel:", self.ao_channel)
+
+        # --- Manual LED test (live brightness tuning) ---
+        form.addRow(QLabel("<b>Manual LED test</b> (LEDD1B in MOD mode)"))
+
+        self.led_slider = QSlider(Qt.Orientation.Horizontal)
+        self.led_slider.setRange(0, MAX_LED_MA)
+        self.led_slider.setValue(500)
+        self.led_slider.valueChanged.connect(self._on_led_value_changed)
+
+        self.led_spin = QSpinBox()
+        self.led_spin.setRange(0, MAX_LED_MA)
+        self.led_spin.setSuffix(" mA")
+        self.led_spin.setValue(500)
+        self.led_spin.valueChanged.connect(self._on_led_value_changed)
+
+        form.addRow("Brightness:", self.led_slider)
+        form.addRow("", self.led_spin)
+
+        self.led_readout = QLabel()
+        form.addRow(self.led_readout)
+
+        self.led_test_btn = QPushButton("LED On (test)")
+        self.led_test_btn.setCheckable(True)
+        self.led_test_btn.clicked.connect(self._on_led_test_toggled)
+        form.addRow(self.led_test_btn)
+
+        self._on_led_value_changed(500)  # initialize readout
         return box
+
+    # -- Manual LED control --------------------------------------------------
+
+    def _on_led_value_changed(self, value: int) -> None:
+        # Keep slider and spinbox in sync without recursing.
+        for w in (self.led_slider, self.led_spin):
+            if w.value() != value:
+                w.blockSignals(True)
+                w.setValue(value)
+                w.blockSignals(False)
+        volts = ma_to_voltage(value)
+        pct = 100.0 * value / MAX_LED_MA
+        self.led_readout.setText(
+            f"→ {volts:.3f} V  (~{pct:.0f}% of the ~1 A limit)"
+        )
+        # If the LED is on for testing, apply the new level live.
+        if self._manual_led is not None:
+            try:
+                self._manual_led.set_ma(float(value))
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_led_test_toggled(self) -> None:
+        if self.led_test_btn.isChecked():
+            try:
+                from led_daq import LedController
+
+                led = LedController(
+                    device=self.device.text().strip(),
+                    ao_channel=self.ao_channel.text().strip(),
+                )
+                led.open()
+                led.set_ma(float(self.led_spin.value()))
+                self._manual_led = led
+            except ImportError as exc:
+                self.led_test_btn.setChecked(False)
+                self._error(
+                    "DAQ SDK not importable in this interpreter.\n"
+                    "Run from the Python 3.10 venv with nidaqmx installed.\n\n"
+                    f"{exc}"
+                )
+                return
+            except Exception as exc:  # noqa: BLE001
+                self.led_test_btn.setChecked(False)
+                self._error(f"Could not turn on LED:\n{exc}")
+                return
+            self.led_test_btn.setText("LED Off")
+        else:
+            self._manual_led_off()
+
+    def _manual_led_off(self) -> None:
+        """Turn the manual test LED off and release its AO task."""
+        if self._manual_led is not None:
+            try:
+                self._manual_led.close()  # forces AO to 0 V then releases task
+            except Exception:  # noqa: BLE001
+                pass
+            self._manual_led = None
+        self.led_test_btn.setChecked(False)
+        self.led_test_btn.setText("LED On (test)")
 
     # -- actions -------------------------------------------------------------
 
@@ -590,6 +685,9 @@ class MainWindow(QMainWindow):
         self._resume_preview_after_record = self.preview_btn.isChecked()
         if self.camera is not None and self.camera.is_previewing():
             self._stop_preview()
+
+        # Release the manual test LED so the recording's own AO task is free.
+        self._manual_led_off()
 
         try:
             camera = self._ensure_camera()  # opens + configures to frame rate
@@ -670,6 +768,9 @@ class MainWindow(QMainWindow):
             self.ao_channel,
             self.connect_btn,
             self.preview_btn,
+            self.led_slider,
+            self.led_spin,
+            self.led_test_btn,
         ):
             w.setEnabled(enabled)
 
@@ -679,6 +780,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         try:
             self._preview_timer.stop()
+            self._manual_led_off()
             self.controller.stop()
             self.controller.close()
             if self.camera is not None:
