@@ -712,6 +712,10 @@ class MainWindow(QMainWindow):
         self.total_duration_label = QLabel("Total duration: 0 ms")
         v.addWidget(self.total_duration_label)
 
+        self.mod_mode_note = QLabel("⚠  LED driver (LEDD1B) must be in MOD mode")
+        self.mod_mode_note.setStyleSheet("color: #e0a000; font-weight: bold;")
+        v.addWidget(self.mod_mode_note)
+
         # Seed with a simple ON/OFF example.
         self._add_row(state=True, duration_ms=1000, intensity_ma=500.0)
         self._add_row(state=False, duration_ms=1000, intensity_ma=0.0)
