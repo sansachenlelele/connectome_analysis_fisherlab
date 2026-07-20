@@ -55,6 +55,28 @@ default `~/Documents/OptoRecordings`, deliberately outside this git repo), build
 the stimulus timeline (rows of ON/OFF + duration + mA, plus a repeat count), then
 **Start**.
 
+## Camera image settings
+
+The Camera panel's "Image settings" group exposes (each flexible — auto or
+fixed):
+
+- **Exposure** — auto toggle + live slider/µs box. Shorter exposure = less
+  motion blur on a walking fly (needs more light).
+- **Gain** — auto toggle + live slider/dB box. Prefer more LED light over gain
+  (gain adds noise).
+- **Gamma** — live; 1.0 = linear.
+- **ROI (Width/Height/Offset)** — crop the readout to the arena for smaller
+  files / higher frame rate. "Full frame" button resets it.
+- **2×2 binning** — half resolution, full field of view, brighter/faster.
+
+Exposure/gain/gamma update the **live preview** in real time; ROI/binning are
+applied when a stream starts (changing them restarts the preview).
+
+> ⚠️ **For opto experiments, use FIXED exposure and gain.** With auto enabled,
+> the camera re-adjusts brightness every time the stimulus LED turns on/off,
+> making the video inconsistent. Untick "Auto exposure"/"Auto gain" and set
+> fixed values so the LED state is what changes, not the camera.
+
 ## Output files
 
 All written to the chosen output folder, sharing the session name:

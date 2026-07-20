@@ -71,6 +71,44 @@ def _set_float(nodemap: "PySpin.INodeMap", name: str, value: float) -> bool:
     return True
 
 
+def _set_int(nodemap: "PySpin.INodeMap", name: str, value: int) -> bool:
+    node = PySpin.CIntegerPtr(nodemap.GetNode(name))
+    if not PySpin.IsAvailable(node) or not PySpin.IsWritable(node):
+        return False
+    lo, hi, inc = node.GetMin(), node.GetMax(), node.GetInc()
+    value = max(lo, min(hi, int(value)))
+    if inc and inc > 1:
+        value = lo + ((value - lo) // inc) * inc  # align to increment
+    node.SetValue(int(value))
+    return True
+
+
+def _read_int(nodemap: "PySpin.INodeMap", name: str):
+    node = PySpin.CIntegerPtr(nodemap.GetNode(name))
+    if PySpin.IsAvailable(node) and PySpin.IsReadable(node):
+        return {
+            "value": node.GetValue(),
+            "min": node.GetMin(),
+            "max": node.GetMax(),
+            "inc": node.GetInc(),
+        }
+    return None
+
+
+def _read_float(nodemap: "PySpin.INodeMap", name: str):
+    node = PySpin.CFloatPtr(nodemap.GetNode(name))
+    if PySpin.IsAvailable(node) and PySpin.IsReadable(node):
+        return {"value": node.GetValue(), "min": node.GetMin(), "max": node.GetMax()}
+    return None
+
+
+def _read_enum(nodemap: "PySpin.INodeMap", name: str):
+    node = PySpin.CEnumerationPtr(nodemap.GetNode(name))
+    if PySpin.IsAvailable(node) and PySpin.IsReadable(node):
+        return node.GetCurrentEntry().GetSymbolic()
+    return None
+
+
 class Camera:
     """A single FLIR camera, configured for opto-behavior recording.
 
@@ -218,6 +256,84 @@ class Camera:
         if PySpin.IsAvailable(node) and PySpin.IsReadable(node):
             return node.GetValue()
         return 0.0
+
+    # -- image parameters ----------------------------------------------------
+    # Exposure / gain / gamma are safe to change while streaming (live tuning).
+    # Geometry (ROI + binning) must be set while NOT streaming; set_geometry is
+    # therefore called from configure()/before a stream starts.
+
+    def set_exposure(self, auto: bool, microseconds: Optional[float] = None) -> None:
+        if self._cam is None:
+            raise CameraError("camera not open()")
+        nm = self._cam.GetNodeMap()
+        _set_enum(nm, "ExposureAuto", "Continuous" if auto else "Off")
+        if not auto and microseconds is not None:
+            _set_float(nm, "ExposureTime", microseconds)
+
+    def set_gain(self, auto: bool, db: Optional[float] = None) -> None:
+        if self._cam is None:
+            raise CameraError("camera not open()")
+        nm = self._cam.GetNodeMap()
+        _set_enum(nm, "GainAuto", "Continuous" if auto else "Off")
+        if not auto and db is not None:
+            _set_float(nm, "Gain", db)
+
+    def set_gamma(self, value: Optional[float], enable: bool = True) -> None:
+        if self._cam is None:
+            raise CameraError("camera not open()")
+        nm = self._cam.GetNodeMap()
+        _set_bool(nm, "GammaEnable", enable)
+        if enable and value is not None:
+            _set_float(nm, "Gamma", value)
+
+    def set_geometry(
+        self,
+        binning: int = 1,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        offset_x: int = 0,
+        offset_y: int = 0,
+    ) -> None:
+        """Set ROI + binning. Only valid when NOT streaming.
+
+        Binning is applied first because it changes the Width/Height maxima.
+        Offsets are zeroed before resizing (a large existing offset would cap
+        the new size), then re-applied after.
+        """
+        if self._cam is None:
+            raise CameraError("camera not open()")
+        if self.is_recording() or self.is_previewing():
+            raise CameraError("stop streaming before changing ROI/binning")
+        nm = self._cam.GetNodeMap()
+        _set_int(nm, "BinningHorizontal", binning)
+        _set_int(nm, "BinningVertical", binning)
+        _set_int(nm, "OffsetX", 0)
+        _set_int(nm, "OffsetY", 0)
+        if width is not None:
+            _set_int(nm, "Width", width)
+        if height is not None:
+            _set_int(nm, "Height", height)
+        _set_int(nm, "OffsetX", offset_x)
+        _set_int(nm, "OffsetY", offset_y)
+
+    def get_settings_info(self) -> dict:
+        """Snapshot of current values + ranges, to populate GUI controls."""
+        if self._cam is None:
+            raise CameraError("camera not open()")
+        nm = self._cam.GetNodeMap()
+        return {
+            "exposure_auto": _read_enum(nm, "ExposureAuto"),
+            "exposure_us": _read_float(nm, "ExposureTime"),
+            "gain_auto": _read_enum(nm, "GainAuto"),
+            "gain_db": _read_float(nm, "Gain"),
+            "gamma": _read_float(nm, "Gamma"),
+            "width": _read_int(nm, "Width"),
+            "height": _read_int(nm, "Height"),
+            "offset_x": _read_int(nm, "OffsetX"),
+            "offset_y": _read_int(nm, "OffsetY"),
+            "binning": _read_int(nm, "BinningHorizontal"),
+            "frame_rate": _read_float(nm, "AcquisitionFrameRate"),
+        }
 
     # -- recording -----------------------------------------------------------
 

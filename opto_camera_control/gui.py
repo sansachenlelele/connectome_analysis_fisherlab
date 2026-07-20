@@ -24,6 +24,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QSlider,
     QButtonGroup,
     QComboBox,
@@ -269,7 +270,12 @@ class MainWindow(QMainWindow):
             self._stop_preview()
 
     def _ensure_camera(self):
-        """Open + configure the shared camera to the current frame rate."""
+        """Open the shared camera and apply all current settings.
+
+        Geometry (ROI/binning) and frame rate can only change when not
+        streaming, so they are applied here at each stream start. Exposure /
+        gain / gamma are also (re)applied so a fresh stream matches the UI.
+        """
         from camera import Camera
 
         if self.camera is None:
@@ -277,10 +283,27 @@ class MainWindow(QMainWindow):
             model = cam.open()
             self.camera = cam
             self.camera_status.setText(f"connected: {model}")
-        # Safe to (re)configure only when not streaming.
-        if not (self.camera.is_recording() or self.camera.is_previewing()):
-            self.camera.configure(frame_rate=self.frame_rate.value())
-        return self.camera
+            self._populate_camera_settings()  # seed widgets from the camera
+        cam = self.camera
+        if not (cam.is_recording() or cam.is_previewing()):
+            binning = 2 if self.binning_chk.isChecked() else 1
+            cam.set_geometry(
+                binning=binning,
+                width=self.roi_w.value(),
+                height=self.roi_h.value(),
+                offset_x=self.roi_x.value(),
+                offset_y=self.roi_y.value(),
+            )
+            cam.configure(frame_rate=self.frame_rate.value())
+            cam.set_exposure(
+                auto=self.exp_auto.isChecked(),
+                microseconds=float(self.exp_spin.value()),
+            )
+            cam.set_gain(
+                auto=self.gain_auto.isChecked(), db=float(self.gain_spin.value())
+            )
+            cam.set_gamma(float(self.gamma_spin.value()), enable=True)
+        return cam
 
     def _start_preview(self) -> None:
         try:
@@ -389,7 +412,260 @@ class MainWindow(QMainWindow):
         form.addRow(self.frames_label)
         form.addRow(self.led_label)
         form.addRow(self.elapsed_label)
+        form.addRow(self._build_image_settings())
         return box
+
+    # -- Image settings (exposure / gain / gamma / ROI / binning) ------------
+
+    def _build_image_settings(self) -> QWidget:
+        box = QGroupBox("Image settings")
+        form = QFormLayout(box)
+
+        # Exposure: auto toggle + live slider/spinbox (microseconds).
+        self.exp_auto = QCheckBox("Auto exposure")
+        self.exp_auto.setChecked(True)
+        self.exp_auto.toggled.connect(self._on_exposure_auto)
+        form.addRow(self.exp_auto)
+        self.exp_slider = QSlider(Qt.Orientation.Horizontal)
+        self.exp_slider.setRange(16, 33257)
+        self.exp_slider.setValue(5000)
+        self.exp_spin = QSpinBox()
+        self.exp_spin.setRange(16, 33257)
+        self.exp_spin.setSuffix(" us")
+        self.exp_spin.setValue(5000)
+        self.exp_slider.valueChanged.connect(
+            lambda v: self._on_exposure_changed(v, "slider")
+        )
+        self.exp_spin.valueChanged.connect(
+            lambda v: self._on_exposure_changed(v, "spin")
+        )
+        form.addRow("Exposure:", self.exp_slider)
+        form.addRow("", self.exp_spin)
+
+        # Gain: auto toggle + live slider/spinbox (dB; slider is dB x10).
+        self.gain_auto = QCheckBox("Auto gain")
+        self.gain_auto.setChecked(True)
+        self.gain_auto.toggled.connect(self._on_gain_auto)
+        form.addRow(self.gain_auto)
+        self.gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.gain_slider.setRange(0, 98)
+        self.gain_slider.setValue(0)
+        self.gain_spin = QDoubleSpinBox()
+        self.gain_spin.setRange(0.0, 9.8)
+        self.gain_spin.setSingleStep(0.1)
+        self.gain_spin.setSuffix(" dB")
+        self.gain_slider.valueChanged.connect(
+            lambda v: self._on_gain_changed(v / 10.0, "slider")
+        )
+        self.gain_spin.valueChanged.connect(
+            lambda v: self._on_gain_changed(v, "spin")
+        )
+        form.addRow("Gain:", self.gain_slider)
+        form.addRow("", self.gain_spin)
+
+        # Gamma (live).
+        self.gamma_spin = QDoubleSpinBox()
+        self.gamma_spin.setRange(0.5, 4.0)
+        self.gamma_spin.setSingleStep(0.05)
+        self.gamma_spin.setValue(1.0)
+        self.gamma_spin.valueChanged.connect(self._on_gamma_changed)
+        form.addRow("Gamma:", self.gamma_spin)
+
+        # ROI + binning (applied when a stream starts; restarts preview).
+        self.binning_chk = QCheckBox("2x2 binning (half resolution, full view)")
+        self.binning_chk.toggled.connect(self._on_geometry_changed)
+        form.addRow(self.binning_chk)
+        self.roi_w = QSpinBox()
+        self.roi_w.setRange(32, 2048)
+        self.roi_w.setSingleStep(32)
+        self.roi_w.setValue(2048)
+        self.roi_h = QSpinBox()
+        self.roi_h.setRange(2, 2048)
+        self.roi_h.setSingleStep(2)
+        self.roi_h.setValue(2048)
+        self.roi_x = QSpinBox()
+        self.roi_x.setRange(0, 2046)
+        self.roi_x.setSingleStep(2)
+        self.roi_y = QSpinBox()
+        self.roi_y.setRange(0, 2046)
+        self.roi_y.setSingleStep(2)
+        for w in (self.roi_w, self.roi_h, self.roi_x, self.roi_y):
+            w.editingFinished.connect(self._on_geometry_changed)
+        form.addRow("ROI width:", self.roi_w)
+        form.addRow("ROI height:", self.roi_h)
+        form.addRow("ROI offset X:", self.roi_x)
+        form.addRow("ROI offset Y:", self.roi_y)
+        self.full_frame_btn = QPushButton("Full frame")
+        self.full_frame_btn.clicked.connect(self._on_full_frame)
+        form.addRow(self.full_frame_btn)
+
+        # Auto on -> manual widgets disabled until the user unticks auto.
+        for w in (self.exp_slider, self.exp_spin, self.gain_slider, self.gain_spin):
+            w.setEnabled(False)
+        self._last_geometry = None
+        return box
+
+    def _on_exposure_auto(self, auto: bool) -> None:
+        self.exp_slider.setEnabled(not auto)
+        self.exp_spin.setEnabled(not auto)
+        if self.camera is not None:
+            try:
+                self.camera.set_exposure(
+                    auto=auto, microseconds=float(self.exp_spin.value())
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_exposure_changed(self, value: float, source: str) -> None:
+        other = self.exp_spin if source == "slider" else self.exp_slider
+        other.blockSignals(True)
+        other.setValue(int(value))
+        other.blockSignals(False)
+        if self.camera is not None and not self.exp_auto.isChecked():
+            try:
+                self.camera.set_exposure(auto=False, microseconds=float(value))
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_gain_auto(self, auto: bool) -> None:
+        self.gain_slider.setEnabled(not auto)
+        self.gain_spin.setEnabled(not auto)
+        if self.camera is not None:
+            try:
+                self.camera.set_gain(auto=auto, db=float(self.gain_spin.value()))
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_gain_changed(self, db: float, source: str) -> None:
+        if source == "slider":
+            self.gain_spin.blockSignals(True)
+            self.gain_spin.setValue(db)
+            self.gain_spin.blockSignals(False)
+        else:
+            self.gain_slider.blockSignals(True)
+            self.gain_slider.setValue(int(round(db * 10)))
+            self.gain_slider.blockSignals(False)
+        if self.camera is not None and not self.gain_auto.isChecked():
+            try:
+                self.camera.set_gain(auto=False, db=float(db))
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_gamma_changed(self, value: float) -> None:
+        if self.camera is not None:
+            try:
+                self.camera.set_gamma(float(value), enable=True)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_full_frame(self) -> None:
+        for w in (self.roi_x, self.roi_y):
+            w.blockSignals(True)
+            w.setValue(0)
+            w.blockSignals(False)
+        self.binning_chk.blockSignals(True)
+        self.binning_chk.setChecked(False)
+        self.binning_chk.blockSignals(False)
+        self.roi_w.blockSignals(True)
+        self.roi_w.setValue(self.roi_w.maximum())
+        self.roi_w.blockSignals(False)
+        self.roi_h.blockSignals(True)
+        self.roi_h.setValue(self.roi_h.maximum())
+        self.roi_h.blockSignals(False)
+        self._on_geometry_changed()
+
+    def _on_geometry_changed(self, *args: object) -> None:
+        # ROI/binning can only change while not streaming; if a preview is
+        # running, restart it to apply. Skip if the geometry is unchanged so
+        # a spinbox losing focus doesn't needlessly restart the preview.
+        geom = (
+            2 if self.binning_chk.isChecked() else 1,
+            self.roi_w.value(),
+            self.roi_h.value(),
+            self.roi_x.value(),
+            self.roi_y.value(),
+        )
+        if geom == self._last_geometry:
+            return
+        self._last_geometry = geom
+        if self.camera is None or self.camera.is_recording():
+            return
+        if self.camera.is_previewing():
+            self._stop_preview()
+            self.preview_btn.setChecked(True)
+            self._start_preview()
+
+    def _populate_camera_settings(self) -> None:
+        """Read current values + ranges from the camera into the widgets."""
+        info = self.camera.get_settings_info()
+
+        d = info.get("exposure_us")
+        if d:
+            for w in (self.exp_slider, self.exp_spin):
+                w.blockSignals(True)
+                w.setRange(int(d["min"]), int(d["max"]))
+                w.setValue(int(d["value"]))
+                w.blockSignals(False)
+        auto = info.get("exposure_auto") != "Off"
+        self.exp_auto.blockSignals(True)
+        self.exp_auto.setChecked(auto)
+        self.exp_auto.blockSignals(False)
+        self.exp_slider.setEnabled(not auto)
+        self.exp_spin.setEnabled(not auto)
+
+        d = info.get("gain_db")
+        if d:
+            self.gain_slider.blockSignals(True)
+            self.gain_slider.setRange(0, int(round(d["max"] * 10)))
+            self.gain_slider.setValue(int(round(d["value"] * 10)))
+            self.gain_slider.blockSignals(False)
+            self.gain_spin.blockSignals(True)
+            self.gain_spin.setRange(d["min"], d["max"])
+            self.gain_spin.setValue(d["value"])
+            self.gain_spin.blockSignals(False)
+        gauto = info.get("gain_auto") != "Off"
+        self.gain_auto.blockSignals(True)
+        self.gain_auto.setChecked(gauto)
+        self.gain_auto.blockSignals(False)
+        self.gain_slider.setEnabled(not gauto)
+        self.gain_spin.setEnabled(not gauto)
+
+        d = info.get("gamma")
+        if d:
+            self.gamma_spin.blockSignals(True)
+            self.gamma_spin.setRange(d["min"], d["max"])
+            self.gamma_spin.setValue(d["value"])
+            self.gamma_spin.blockSignals(False)
+
+        for spin, key in (
+            (self.roi_w, "width"),
+            (self.roi_h, "height"),
+        ):
+            d = info.get(key)
+            if d:
+                spin.blockSignals(True)
+                spin.setRange(int(d["min"]), int(d["max"]))
+                spin.setSingleStep(max(1, int(d["inc"])))
+                spin.setValue(int(d["value"]))
+                spin.blockSignals(False)
+        for spin, key in ((self.roi_x, "offset_x"), (self.roi_y, "offset_y")):
+            d = info.get(key)
+            if d:
+                spin.blockSignals(True)
+                spin.setValue(int(d["value"]))
+                spin.blockSignals(False)
+        d = info.get("binning")
+        if d:
+            self.binning_chk.blockSignals(True)
+            self.binning_chk.setChecked(int(d["value"]) >= 2)
+            self.binning_chk.blockSignals(False)
+        self._last_geometry = (
+            2 if self.binning_chk.isChecked() else 1,
+            self.roi_w.value(),
+            self.roi_h.value(),
+            self.roi_x.value(),
+            self.roi_y.value(),
+        )
 
     # -- Stimulus panel ------------------------------------------------------
 
@@ -795,8 +1071,22 @@ class MainWindow(QMainWindow):
             self.led_spin,
             self.led_test_btn,
             self.apply_led_btn,
+            self.exp_auto,
+            self.gain_auto,
+            self.gamma_spin,
+            self.binning_chk,
+            self.roi_w,
+            self.roi_h,
+            self.roi_x,
+            self.roi_y,
+            self.full_frame_btn,
         ):
             w.setEnabled(enabled)
+        # Exposure/gain manual widgets follow their auto checkbox when enabling.
+        for w in (self.exp_slider, self.exp_spin):
+            w.setEnabled(enabled and not self.exp_auto.isChecked())
+        for w in (self.gain_slider, self.gain_spin):
+            w.setEnabled(enabled and not self.gain_auto.isChecked())
 
     def _error(self, message: str) -> None:
         QMessageBox.critical(self, "Opto-Camera Control", message)
