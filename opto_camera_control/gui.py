@@ -557,8 +557,31 @@ class MainWindow(QMainWindow):
         self.led_test_btn.clicked.connect(self._on_led_test_toggled)
         form.addRow(self.led_test_btn)
 
+        self.apply_led_btn = QPushButton("Apply brightness to timeline ON rows")
+        self.apply_led_btn.setToolTip(
+            "Fill the current brightness (mA) into every ON row of the stimulus "
+            "timeline, so the level you tuned here is what gets recorded."
+        )
+        self.apply_led_btn.clicked.connect(self._on_apply_led_to_timeline)
+        form.addRow(self.apply_led_btn)
+
         self._on_led_value_changed(500)  # initialize readout
         return box
+
+    def _on_apply_led_to_timeline(self) -> None:
+        value = self.led_spin.value()
+        applied = 0
+        for r in range(self.table.rowCount()):
+            state, _dur, _inten = self._read_row(r)
+            if state:  # ON row
+                item = self.table.item(r, 2)
+                if item is not None:
+                    item.setText(str(value))
+                    applied += 1
+        self._update_total_duration()
+        self.statusBar().showMessage(
+            f"Applied {value} mA to {applied} ON row(s) in the timeline."
+        )
 
     # -- Manual LED control --------------------------------------------------
 
@@ -771,6 +794,7 @@ class MainWindow(QMainWindow):
             self.led_slider,
             self.led_spin,
             self.led_test_btn,
+            self.apply_led_btn,
         ):
             w.setEnabled(enabled)
 
