@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QBrush, QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QSlider,
@@ -680,7 +680,7 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
-        self.table.cellChanged.connect(self._update_total_duration)
+        self.table.cellChanged.connect(self._on_cell_changed)
         v.addWidget(self.table)
 
         row_btns = QHBoxLayout()
@@ -725,18 +725,81 @@ class MainWindow(QMainWindow):
         intensity_ma: float = 500.0,
     ) -> None:
         r = self.table.rowCount()
+        self.table.blockSignals(True)
         self.table.insertRow(r)
 
         combo = QComboBox()
         combo.addItems(["ON", "OFF"])
         combo.setCurrentIndex(0 if state else 1)
+        combo.currentIndexChanged.connect(self._on_row_state_changed)
         self.table.setCellWidget(r, 0, combo)
 
         dur = QTableWidgetItem(str(duration_ms))
         self.table.setItem(r, 1, dur)
-        inten = QTableWidgetItem(f"{intensity_ma:g}")
+        # The ON intensity is stored in the item's UserRole so it survives being
+        # blanked while the row is OFF; the visible text is derived from state.
+        inten = QTableWidgetItem()
+        inten.setData(Qt.ItemDataRole.UserRole, float(intensity_ma))
         self.table.setItem(r, 2, inten)
+        self.table.blockSignals(False)
+        self._refresh_intensity_cell(r)
         self._update_total_duration()
+
+    def _refresh_intensity_cell(self, r: int) -> None:
+        """Show/enable the Intensity cell for ON rows; blank+grey it for OFF."""
+        combo = self.table.cellWidget(r, 0)
+        item = self.table.item(r, 2)
+        if combo is None or item is None:
+            return
+        on = combo.currentIndex() == 0
+        self.table.blockSignals(True)
+        if on:
+            val = item.data(Qt.ItemDataRole.UserRole)
+            item.setText(f"{float(val or 0):g}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+            item.setBackground(QBrush())
+        else:
+            # Preserve any number currently shown as the row's ON value.
+            txt = item.text().strip()
+            if txt:
+                try:
+                    item.setData(Qt.ItemDataRole.UserRole, float(txt))
+                except ValueError:
+                    pass
+            item.setText("")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            item.setBackground(QBrush(QColor("#3a3a3a")))
+        self.table.blockSignals(False)
+
+    def _row_of_widget(self, w) -> Optional[int]:
+        for r in range(self.table.rowCount()):
+            if self.table.cellWidget(r, 0) is w:
+                return r
+        return None
+
+    def _on_row_state_changed(self, *args: object) -> None:
+        r = self._row_of_widget(self.sender())
+        if r is not None:
+            self._refresh_intensity_cell(r)
+            self._update_total_duration()
+
+    def _on_cell_changed(self, row: int, col: int) -> None:
+        # Keep the stored ON value in sync when the user edits an ON row's mA.
+        if col == 2:
+            combo = self.table.cellWidget(row, 0)
+            item = self.table.item(row, 2)
+            if combo is not None and item is not None and combo.currentIndex() == 0:
+                try:
+                    item.setData(Qt.ItemDataRole.UserRole, float(item.text()))
+                except ValueError:
+                    pass
+        self._update_total_duration()
+
+    def _set_row_intensity(self, r: int, value: float) -> None:
+        item = self.table.item(r, 2)
+        if item is not None:
+            item.setData(Qt.ItemDataRole.UserRole, float(value))
+            self._refresh_intensity_cell(r)
 
     def _remove_row(self) -> None:
         r = self.table.currentRow()
@@ -759,18 +822,26 @@ class MainWindow(QMainWindow):
         self._write_row(a, rb)
         self._write_row(b, ra)
 
-    def _read_row(self, r: int) -> tuple[bool, str, str]:
+    def _read_row(self, r: int) -> tuple[bool, str, float]:
         combo = self.table.cellWidget(r, 0)
         state = combo.currentIndex() == 0
         dur = self.table.item(r, 1).text() if self.table.item(r, 1) else "0"
-        inten = self.table.item(r, 2).text() if self.table.item(r, 2) else "0"
-        return state, dur, inten
+        item = self.table.item(r, 2)
+        val = item.data(Qt.ItemDataRole.UserRole) if item else None
+        intensity = float(val) if val is not None else 0.0
+        return state, dur, intensity
 
-    def _write_row(self, r: int, data: tuple[bool, str, str]) -> None:
-        state, dur, inten = data
-        self.table.cellWidget(r, 0).setCurrentIndex(0 if state else 1)
+    def _write_row(self, r: int, data: tuple[bool, str, float]) -> None:
+        state, dur, intensity = data
+        combo = self.table.cellWidget(r, 0)
+        combo.blockSignals(True)
+        combo.setCurrentIndex(0 if state else 1)
+        combo.blockSignals(False)
+        self.table.blockSignals(True)
         self.table.item(r, 1).setText(dur)
-        self.table.item(r, 2).setText(inten)
+        self.table.item(r, 2).setData(Qt.ItemDataRole.UserRole, float(intensity))
+        self.table.blockSignals(False)
+        self._refresh_intensity_cell(r)
 
     def _update_total_duration(self, *args: object) -> None:
         try:
@@ -850,10 +921,8 @@ class MainWindow(QMainWindow):
         for r in range(self.table.rowCount()):
             state, _dur, _inten = self._read_row(r)
             if state:  # ON row
-                item = self.table.item(r, 2)
-                if item is not None:
-                    item.setText(str(value))
-                    applied += 1
+                self._set_row_intensity(r, value)
+                applied += 1
         self._update_total_duration()
         self.statusBar().showMessage(
             f"Applied {value} mA to {applied} ON row(s) in the timeline."
