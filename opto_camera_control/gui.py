@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -71,6 +72,7 @@ class RecordingController:
     def start(
         self,
         *,
+        camera,
         output_dir: str,
         session_name: str,
         frame_rate: float,
@@ -81,7 +83,6 @@ class RecordingController:
         sync_mode: str,
     ) -> None:
         # Lazy imports so the GUI can open without PySpin/nidaqmx present.
-        from camera import Camera
         from led_daq import LedController
         from session_logger import SessionLogger
 
@@ -92,9 +93,9 @@ class RecordingController:
         led = LedController(device=device, ao_channel=ao_channel)
         led.open()
 
-        camera = Camera()
-        model = camera.open()
-        camera.configure(frame_rate=frame_rate)
+        # Camera is owned by the window (shared with live preview) and is
+        # already open + configured to the requested frame rate.
+        model = camera.model_name()
 
         logger = SessionLogger(
             output_dir=output_dir,
@@ -174,12 +175,11 @@ class RecordingController:
             self._camera.stop()
 
     def close(self) -> None:
-        try:
-            if self._camera is not None:
-                self._camera.close()
-        finally:
-            if self._led is not None:
-                self._led.close()
+        # The camera is owned by the window (shared with preview), so only the
+        # LED task is released here.
+        if self._led is not None:
+            self._led.close()
+            self._led = None
 
     # -- live status (polled by the GUI timer) -------------------------------
 
@@ -205,9 +205,17 @@ class MainWindow(QMainWindow):
         self.controller = RecordingController()
         self._start_time = 0.0
 
+        # Shared camera (used by both live preview and recording), plus the
+        # latest preview frame handed off from the camera thread under a lock.
+        self.camera = None
+        self._frame_lock = threading.Lock()
+        self._latest_frame = None
+        self._resume_preview_after_record = False
+
         central = QWidget()
         self.setCentralWidget(central)
         layout = QHBoxLayout(central)
+        layout.addWidget(self._build_preview_panel())
         layout.addWidget(self._build_camera_panel())
         layout.addWidget(self._build_stimulus_panel())
         layout.addWidget(self._build_sync_panel())
@@ -217,6 +225,105 @@ class MainWindow(QMainWindow):
         self._status_timer.setInterval(200)  # 5 Hz
         self._status_timer.timeout.connect(self._refresh_status)
         self._status_timer.start()
+
+        # Separate, faster timer that paints the latest preview frame.
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setInterval(50)  # 20 Hz display
+        self._preview_timer.timeout.connect(self._update_preview)
+
+    # -- Preview panel -------------------------------------------------------
+
+    def _build_preview_panel(self) -> QWidget:
+        box = QGroupBox("Live preview")
+        v = QVBoxLayout(box)
+
+        self.preview_label = QLabel("preview off")
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.setMinimumSize(480, 480)
+        self.preview_label.setStyleSheet(
+            "background-color: #202020; color: #888; border: 1px solid #444;"
+        )
+        v.addWidget(self.preview_label)
+
+        self.preview_btn = QPushButton("Start Preview")
+        self.preview_btn.setCheckable(True)
+        self.preview_btn.clicked.connect(self._on_toggle_preview)
+        v.addWidget(self.preview_btn)
+
+        self.preview_status = QLabel("Aim the camera before recording.")
+        v.addWidget(self.preview_status)
+        return box
+
+    def _on_toggle_preview(self) -> None:
+        if self.preview_btn.isChecked():
+            self._start_preview()
+        else:
+            self._stop_preview()
+
+    def _ensure_camera(self):
+        """Open + configure the shared camera to the current frame rate."""
+        from camera import Camera
+
+        if self.camera is None:
+            cam = Camera()
+            model = cam.open()
+            self.camera = cam
+            self.camera_status.setText(f"connected: {model}")
+        # Safe to (re)configure only when not streaming.
+        if not (self.camera.is_recording() or self.camera.is_previewing()):
+            self.camera.configure(frame_rate=self.frame_rate.value())
+        return self.camera
+
+    def _start_preview(self) -> None:
+        try:
+            cam = self._ensure_camera()
+            cam.start_preview(self._on_preview_frame)
+        except ImportError as exc:
+            self.preview_btn.setChecked(False)
+            self._error(
+                "Camera SDK not importable in this interpreter.\n"
+                "Run from the Python 3.10 venv with PySpin installed.\n\n"
+                f"{exc}"
+            )
+            return
+        except Exception as exc:  # noqa: BLE001
+            self.preview_btn.setChecked(False)
+            self._error(f"Could not start preview:\n{exc}")
+            return
+        self.preview_btn.setText("Stop Preview")
+        self.preview_status.setText("Preview running.")
+        self._preview_timer.start()
+
+    def _stop_preview(self) -> None:
+        self._preview_timer.stop()
+        if self.camera is not None:
+            self.camera.stop_preview()
+        with self._frame_lock:
+            self._latest_frame = None
+        self.preview_btn.setChecked(False)
+        self.preview_btn.setText("Start Preview")
+        self.preview_status.setText("Preview stopped.")
+        self.preview_label.setText("preview off")
+
+    def _on_preview_frame(self, arr) -> None:
+        # Called on the camera preview thread; just stash the frame.
+        with self._frame_lock:
+            self._latest_frame = arr
+
+    def _update_preview(self) -> None:
+        with self._frame_lock:
+            arr = self._latest_frame
+        if arr is None:
+            return
+        h, w = arr.shape[:2]
+        data = arr.tobytes()
+        image = QImage(data, w, h, w, QImage.Format.Format_Grayscale8)
+        pix = QPixmap.fromImage(image).scaled(
+            self.preview_label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.preview_label.setPixmap(pix)
 
     # -- Camera panel --------------------------------------------------------
 
@@ -431,6 +538,11 @@ class MainWindow(QMainWindow):
             self.output_dir.setText(path)
 
     def _on_connect(self) -> None:
+        # If the shared camera is already open (e.g. from preview), just report
+        # it rather than enumerating again (avoids touching the live stream).
+        if self.camera is not None:
+            self.camera_status.setText(f"connected: {self.camera.model_name()}")
+            return
         try:
             from camera import Camera
 
@@ -472,8 +584,17 @@ class MainWindow(QMainWindow):
             return
 
         session = self.session_name.text().strip() or self._default_session_name()
+
+        # Pause live preview (one acquisition stream at a time) and remember to
+        # resume it once recording finishes.
+        self._resume_preview_after_record = self.preview_btn.isChecked()
+        if self.camera is not None and self.camera.is_previewing():
+            self._stop_preview()
+
         try:
+            camera = self._ensure_camera()  # opens + configures to frame rate
             self.controller.start(
+                camera=camera,
                 output_dir=self.output_dir.text().strip(),
                 session_name=session,
                 frame_rate=self.frame_rate.value(),
@@ -524,13 +645,18 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self._set_config_enabled(True)
-        self.controller.close()
+        self.controller.close()  # releases the LED task; camera stays open
         if st.get("error"):
             self._error(f"Recording error:\n{st['error']}")
             self.statusBar().showMessage("Recording failed.")
         elif st.get("summary"):
             self.statusBar().showMessage(st["summary"])
             self.session_name.setText(self._default_session_name())
+        # Resume live preview if it was running before this recording.
+        if self._resume_preview_after_record and self.camera is not None:
+            self._resume_preview_after_record = False
+            self.preview_btn.setChecked(True)
+            self._start_preview()
 
     def _set_config_enabled(self, enabled: bool) -> None:
         for w in (
@@ -543,6 +669,7 @@ class MainWindow(QMainWindow):
             self.device,
             self.ao_channel,
             self.connect_btn,
+            self.preview_btn,
         ):
             w.setEnabled(enabled)
 
@@ -551,7 +678,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         try:
+            self._preview_timer.stop()
             self.controller.stop()
             self.controller.close()
+            if self.camera is not None:
+                self.camera.close()  # stops preview + recording, releases handles
+                self.camera = None
         finally:
             super().closeEvent(event)

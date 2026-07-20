@@ -23,6 +23,7 @@ import threading
 import time
 from typing import Callable, Optional
 
+import numpy as np
 import PySpin  # type: ignore[import-not-found]
 
 #: Per-frame callback: ``(frame_index, camera_timestamp_ns, host_time_s, incomplete)``.
@@ -98,6 +99,11 @@ class Camera:
         # _record_worker about SpinVideo's -NNNN chunk suffix).
         self._video_files: list[str] = []
 
+        # Live preview (no recording) -- mutually exclusive with record() since
+        # the camera can only run one acquisition stream at a time.
+        self._preview_stop = threading.Event()
+        self._preview_thread: Optional[threading.Thread] = None
+
     # -- lifecycle -----------------------------------------------------------
 
     def open(self) -> str:
@@ -116,6 +122,7 @@ class Camera:
 
     def close(self) -> None:
         """Stop recording, deinit the camera, and release Spinnaker handles."""
+        self.stop_preview()
         self.stop()
         if self._cam is not None:
             try:
@@ -233,6 +240,8 @@ class Camera:
         """
         if self._cam is None:
             raise CameraError("camera not open()")
+        if self.is_previewing():
+            raise CameraError("stop the preview before recording")
         if self._record_thread and self._record_thread.is_alive():
             raise CameraError("a recording is already in progress")
         self._stop_event.clear()
@@ -350,3 +359,78 @@ class Camera:
 
     def is_recording(self) -> bool:
         return bool(self._record_thread and self._record_thread.is_alive())
+
+    # -- live preview --------------------------------------------------------
+
+    def start_preview(self, on_array: Callable[["np.ndarray"], None]) -> None:
+        """Stream frames to *on_array* as 2-D uint8 arrays, without recording.
+
+        Used to frame/aim the camera before a recording. ``on_array`` is called
+        on the preview worker thread with a fresh grayscale frame each time;
+        the caller must not touch GUI objects directly from it.
+        """
+        if self._cam is None:
+            raise CameraError("camera not open()")
+        if self.is_recording():
+            raise CameraError("cannot preview while recording")
+        if self.is_previewing():
+            return
+        # Make sure automatic frame-rate control is off and mode is continuous;
+        # configure() normally handled this, but preview may run before it.
+        nodemap = self._cam.GetNodeMap()
+        _set_enum(nodemap, "AcquisitionMode", "Continuous")
+        self._preview_stop.clear()
+        self._preview_thread = threading.Thread(
+            target=self._preview_worker,
+            args=(on_array,),
+            name="camera-preview",
+            daemon=True,
+        )
+        self._preview_thread.start()
+
+    def _preview_worker(self, on_array: Callable[["np.ndarray"], None]) -> None:
+        assert self._cam is not None
+        processor = PySpin.ImageProcessor()
+        processor.SetColorProcessing(
+            PySpin.SPINNAKER_COLOR_PROCESSING_ALGORITHM_HQ_LINEAR
+        )
+        target_pf = getattr(PySpin, f"PixelFormat_{self.record_pixel_format}")
+        try:
+            self._cam.BeginAcquisition()
+            while not self._preview_stop.is_set():
+                try:
+                    image = self._cam.GetNextImage(500)
+                except PySpin.SpinnakerException:
+                    continue
+                try:
+                    if not image.IsIncomplete():
+                        converted = processor.Convert(image, target_pf)
+                        # Copy: the ndarray views the image buffer, which is
+                        # freed on Release(); the GUI keeps the frame later.
+                        arr = np.array(converted.GetNDArray(), copy=True)
+                        on_array(arr)
+                finally:
+                    image.Release()
+        except PySpin.SpinnakerException as exc:
+            raise CameraError(f"preview failed: {exc}") from exc
+        finally:
+            try:
+                if self._cam is not None and self._cam.IsStreaming():
+                    self._cam.EndAcquisition()
+            except PySpin.SpinnakerException:
+                pass
+
+    def stop_preview(self) -> None:
+        """Stop the preview stream and wait for the worker to exit."""
+        self._preview_stop.set()
+        thread = self._preview_thread
+        if (
+            thread is not None
+            and thread.is_alive()
+            and thread is not threading.current_thread()
+        ):
+            thread.join(timeout=3.0)
+        self._preview_thread = None
+
+    def is_previewing(self) -> bool:
+        return bool(self._preview_thread and self._preview_thread.is_alive())
