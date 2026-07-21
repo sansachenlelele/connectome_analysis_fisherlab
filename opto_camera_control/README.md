@@ -88,13 +88,22 @@ All written to the chosen output folder, sharing the session name:
 | File | Contents |
 | --- | --- |
 | `<session>.avi` | M-JPEG video (quality 80) |
-| `<session>_timestamps.csv` | **one row per frame**: `frame_index, host_time_s, camera_timestamp_ns, led_state, led_ma, incomplete, strobe_sample` |
+| `<session>_timestamps.csv` | **exactly one row per video frame**, index-aligned to the AVI: `frame_index, host_time_s, camera_timestamp_ns, led_state, led_ma, strobe_sample` |
 | `<session>_transitions.csv` | raw LED transition log |
-| `<session>_meta.json` | frame rate, frame count, timeline, device, sync mode, clock origin, final frame/drop counts |
+| `<session>_skipped.csv` | frames that did NOT enter the video: `kind` (incomplete/dropped), `camera_frame_id`, `camera_timestamp_ns`, `host_time_s`, `count`, `note` |
+| `<session>_meta.json` | frame rate, frame count, timeline, device, sync mode, clock origin, and `frames_logged` / `frames_incomplete` / `frames_dropped` |
 
 `host_time_s` is a monotonic `perf_counter` value; frame rows and transition
 rows share that clock. `meta.json` records the wall-clock origin to convert if
 needed.
+
+**Frame integrity.** `frame_index` in the timestamps CSV is the frame's true
+position in the AVI — corrupt ("incomplete") frames and camera-dropped frames
+(detected as gaps in the camera FrameID) are kept out of both the video and the
+timestamps CSV and logged in `<session>_skipped.csv` instead. So a timestamps
+row always corresponds to the same-numbered AVI frame, no matter what was
+skipped. Check `frames_incomplete`/`frames_dropped` are 0 (or inspect
+`_skipped.csv`) to confirm a clean recording.
 
 ## Aligning with SLEAP
 
@@ -108,11 +117,11 @@ pose = pd.read_csv("session.analysis.csv")   # SLEAP export
 merged = pose.merge(ts, left_on="frame_idx", right_on="frame_index")
 ```
 
-Because the timestamps CSV is one row per frame (single fly → one instance per
-frame), no timestamp interpolation is needed. The one caveat is **dropped
-frames**: if the camera drops frames the two indexings could diverge, so the app
-counts incomplete frames (`incomplete` column + `frames_incomplete` in
-`meta.json`) — check that count is 0, or account for it, before merging.
+Because the timestamps CSV is one row per video frame (single fly → one instance
+per frame) and is index-aligned to the AVI, no timestamp interpolation is needed
+and dropped/incomplete frames can't desync the join — they're excluded from both
+the video and the CSV (and recorded in `_skipped.csv`). Still worth confirming
+`frames_dropped`/`frames_incomplete` are 0 in `meta.json` for a clean run.
 
 ## Sync modes
 

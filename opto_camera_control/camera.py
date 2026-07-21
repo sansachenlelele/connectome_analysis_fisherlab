@@ -26,10 +26,16 @@ from typing import Callable, Optional
 import numpy as np
 import PySpin  # type: ignore[import-not-found]
 
-#: Per-frame callback: ``(frame_index, camera_timestamp_ns, host_time_s, incomplete)``.
-FrameCallback = Callable[[int, int, float, bool], None]
-#: End-of-recording callback: ``(completed, frames_written, frames_incomplete)``.
-FinishedCallback = Callable[[bool, int, int], None]
+#: Per-frame callback, called ONCE PER FRAME WRITTEN TO THE VIDEO so the row
+#: index matches the AVI frame index: ``(frame_index, camera_timestamp_ns,
+#: host_time_s)``.
+FrameCallback = Callable[[int, int, float], None]
+#: Skipped-frame callback: ``(kind, camera_frame_id, camera_timestamp_ns,
+#: host_time_s, count, note)`` where kind is "incomplete" or "dropped".
+SkipCallback = Callable[[str, int, int, float, int, str], None]
+#: End-of-recording callback:
+#: ``(completed, frames_written, frames_incomplete, frames_dropped)``.
+FinishedCallback = Callable[[bool, int, int, int], None]
 
 
 class CameraError(RuntimeError):
@@ -343,6 +349,7 @@ class Camera:
         n_frames: int = 0,
         on_frame: Optional[FrameCallback] = None,
         on_finished: Optional[FinishedCallback] = None,
+        on_skip: Optional[SkipCallback] = None,
     ) -> None:
         """Start recording on a background thread.
 
@@ -350,8 +357,12 @@ class Camera:
             output_basepath: Path WITHOUT extension; SpinVideo appends ``.avi``.
             n_frames: Stop after this many good frames; 0 means run until
                 :meth:`stop` is called.
-            on_frame: Called for each grabbed frame (including incomplete ones,
-                flagged via the callback's ``incomplete`` argument).
+            on_frame: Called once per frame ACTUALLY WRITTEN to the video, with
+                a frame_index equal to that frame's position in the AVI. This
+                keeps the timestamps CSV row-aligned with the video.
+            on_skip: Called for frames that did NOT make it into the video --
+                "incomplete" (corrupt transfer) or "dropped" (never delivered,
+                detected as a gap in the camera FrameID sequence).
             on_finished: Called once when recording ends.
         """
         if self._cam is None:
@@ -363,7 +374,7 @@ class Camera:
         self._stop_event.clear()
         self._record_thread = threading.Thread(
             target=self._record_worker,
-            args=(output_basepath, n_frames, on_frame, on_finished),
+            args=(output_basepath, n_frames, on_frame, on_finished, on_skip),
             name="camera-record",
             daemon=True,
         )
@@ -375,10 +386,13 @@ class Camera:
         n_frames: int,
         on_frame: Optional[FrameCallback],
         on_finished: Optional[FinishedCallback],
+        on_skip: Optional[SkipCallback],
     ) -> None:
         assert self._cam is not None
         written = 0
         incomplete = 0
+        dropped = 0
+        prev_frame_id: Optional[int] = None
         completed = False
 
         option = PySpin.MJPGOption()
@@ -395,7 +409,6 @@ class Camera:
         try:
             video.Open(output_basepath, option)
             self._cam.BeginAcquisition()
-            frame_index = 0
             while not self._stop_event.is_set():
                 if n_frames and written >= n_frames:
                     completed = True
@@ -407,19 +420,41 @@ class Camera:
                     continue
 
                 host_ts = time.perf_counter()
-                is_incomplete = image.IsIncomplete()
                 camera_ts = int(image.GetTimeStamp())
+                try:
+                    frame_id = int(image.GetFrameID())
+                except PySpin.SpinnakerException:
+                    frame_id = -1
 
-                if is_incomplete:
+                # Detect frames the camera produced but never delivered: a jump
+                # in the FrameID sequence larger than 1 means (gap-1) were lost.
+                if prev_frame_id is not None and frame_id > prev_frame_id + 1:
+                    gap = frame_id - prev_frame_id - 1
+                    dropped += gap
+                    if on_skip is not None:
+                        on_skip(
+                            "dropped", frame_id, camera_ts, host_ts, gap,
+                            f"FrameID gap {prev_frame_id} -> {frame_id}",
+                        )
+                if frame_id >= 0:
+                    prev_frame_id = frame_id
+
+                if image.IsIncomplete():
                     incomplete += 1
-                else:
-                    converted = processor.Convert(image, target_pf)
-                    video.Append(converted)
-                    written += 1
+                    if on_skip is not None:
+                        on_skip(
+                            "incomplete", frame_id, camera_ts, host_ts, 1,
+                            f"image status {image.GetImageStatus()}",
+                        )
+                    image.Release()
+                    continue
 
+                # Complete frame: this is video frame index == written.
+                converted = processor.Convert(image, target_pf)
+                video.Append(converted)
                 if on_frame is not None:
-                    on_frame(frame_index, camera_ts, host_ts, is_incomplete)
-                frame_index += 1
+                    on_frame(written, camera_ts, host_ts)
+                written += 1
                 image.Release()
         except PySpin.SpinnakerException as exc:
             raise CameraError(f"recording failed: {exc}") from exc
@@ -435,7 +470,7 @@ class Camera:
                 pass
             self._video_files = self._resolve_video_files(output_basepath)
             if on_finished is not None:
-                on_finished(completed, written, incomplete)
+                on_finished(completed, written, incomplete, dropped)
 
     def _resolve_video_files(self, output_basepath: str) -> list[str]:
         """Return the AVI file(s) SpinVideo actually wrote.

@@ -41,16 +41,27 @@ class SessionLogger:
             (frame rate, frame count, timeline dict, device, sync mode, ...).
     """
 
+    # One row per frame ACTUALLY written to the video, so frame_index lines up
+    # 1:1 with the AVI frame index (the key invariant for SLEAP alignment).
     TIMESTAMP_FIELDS = [
         "frame_index",
         "host_time_s",
         "camera_timestamp_ns",
         "led_state",
         "led_ma",
-        "incomplete",
         "strobe_sample",  # reserved for hardware-sync mode
     ]
     TRANSITION_FIELDS = ["host_time_s", "led_state", "led_ma", "voltage"]
+    # Frames that did NOT make it into the video (kept out of the timestamps CSV
+    # so the row/frame alignment is never broken).
+    SKIP_FIELDS = [
+        "kind",  # "incomplete" | "dropped"
+        "camera_frame_id",
+        "camera_timestamp_ns",
+        "host_time_s",
+        "count",
+        "note",
+    ]
 
     def __init__(
         self,
@@ -69,9 +80,12 @@ class SessionLogger:
         self._ts_writer: Optional[csv.DictWriter] = None
         self._tr_file = None
         self._tr_writer: Optional[csv.DictWriter] = None
+        self._skip_file = None
+        self._skip_writer: Optional[csv.DictWriter] = None
 
         self._frames_logged = 0
         self._frames_incomplete = 0
+        self._frames_dropped = 0
         self._t0_perf = 0.0
         self._t0_wall = 0.0
 
@@ -104,6 +118,12 @@ class SessionLogger:
         self._tr_writer = csv.DictWriter(self._tr_file, self.TRANSITION_FIELDS)
         self._tr_writer.writeheader()
 
+        self._skip_file = self._path("_skipped.csv").open(
+            "w", newline="", encoding="utf-8"
+        )
+        self._skip_writer = csv.DictWriter(self._skip_file, self.SKIP_FIELDS)
+        self._skip_writer.writeheader()
+
     def __enter__(self) -> "SessionLogger":
         self.open()
         return self
@@ -118,9 +138,8 @@ class SessionLogger:
         frame_index: int,
         camera_timestamp_ns: int,
         host_time_s: float,
-        incomplete: bool,
     ) -> None:
-        """Write one per-frame row, tagging it with the live LED state."""
+        """Write one per-frame row (for a frame written to the video)."""
         state, ma = self._current_state_fn()
         with self._lock:
             if self._ts_writer is None:
@@ -132,13 +151,37 @@ class SessionLogger:
                     "camera_timestamp_ns": camera_timestamp_ns,
                     "led_state": int(bool(state)),
                     "led_ma": f"{ma:.3f}",
-                    "incomplete": int(bool(incomplete)),
                     "strobe_sample": "",
                 }
             )
             self._frames_logged += 1
-            if incomplete:
-                self._frames_incomplete += 1
+
+    def log_skip(
+        self,
+        kind: str,
+        camera_frame_id: int,
+        camera_timestamp_ns: int,
+        host_time_s: float,
+        count: int,
+        note: str,
+    ) -> None:
+        """Record frame(s) that did not enter the video (incomplete/dropped)."""
+        with self._lock:
+            if self._skip_writer is not None:
+                self._skip_writer.writerow(
+                    {
+                        "kind": kind,
+                        "camera_frame_id": camera_frame_id,
+                        "camera_timestamp_ns": camera_timestamp_ns,
+                        "host_time_s": f"{host_time_s:.6f}",
+                        "count": count,
+                        "note": note,
+                    }
+                )
+            if kind == "incomplete":
+                self._frames_incomplete += count
+            elif kind == "dropped":
+                self._frames_dropped += count
 
     def log_transition(
         self, host_time_s: float, state: bool, ma: float, voltage: float
@@ -169,6 +212,10 @@ class SessionLogger:
                 self._tr_file.close()
                 self._tr_file = None
                 self._tr_writer = None
+            if self._skip_file is not None:
+                self._skip_file.close()
+                self._skip_file = None
+                self._skip_writer = None
 
             meta = dict(self._metadata)
             if extra_meta:
@@ -178,6 +225,7 @@ class SessionLogger:
                     "session_name": self.session_name,
                     "frames_logged": self._frames_logged,
                     "frames_incomplete": self._frames_incomplete,
+                    "frames_dropped": self._frames_dropped,
                     "clock": {
                         "t0_perf_counter_s": self._t0_perf,
                         "t0_wall_epoch_s": self._t0_wall,
@@ -198,3 +246,7 @@ class SessionLogger:
     @property
     def frames_incomplete(self) -> int:
         return self._frames_incomplete
+
+    @property
+    def frames_dropped(self) -> int:
+        return self._frames_dropped

@@ -145,12 +145,13 @@ class RecordingController:
             output_basepath=logger.video_basepath,
             n_frames=n_frames,
             on_frame=logger.log_frame,
+            on_skip=logger.log_skip,
             on_finished=self._on_camera_finished,
         )
         led.run_timeline(timeline, on_transition=logger.log_transition)
 
     def _on_camera_finished(
-        self, completed: bool, written: int, incomplete: int
+        self, completed: bool, written: int, incomplete: int, dropped: int
     ) -> None:
         # Runs on the camera worker thread. Stop the LED and finalize once.
         with self._lock:
@@ -171,8 +172,8 @@ class RecordingController:
                 )
                 self.result_summary = (
                     f"{'Completed' if completed else 'Stopped'}: "
-                    f"{written} frames written, {incomplete} incomplete. "
-                    f"Meta: {meta_path.name}"
+                    f"{written} frames written, {incomplete} incomplete, "
+                    f"{dropped} dropped. Meta: {meta_path.name}"
                 )
         except Exception as exc:  # noqa: BLE001 - surfaced to GUI status
             self.error = str(exc)
@@ -201,6 +202,7 @@ class RecordingController:
             "running": self.running,
             "frames": self._logger.frames_logged if self._logger else 0,
             "incomplete": self._logger.frames_incomplete if self._logger else 0,
+            "dropped": self._logger.frames_dropped if self._logger else 0,
             "led_state": led_state,
             "led_ma": led_ma,
             "error": self.error,
@@ -404,7 +406,7 @@ class MainWindow(QMainWindow):
         btn_widget = QWidget()
         btn_widget.setLayout(btn_row)
 
-        self.frames_label = QLabel("frames: 0  (incomplete: 0)")
+        self.frames_label = QLabel("frames: 0  (incomplete: 0, dropped: 0)")
         self.led_label = QLabel("LED: OFF")
         self.elapsed_label = QLabel("elapsed: 0.0 s")
 
@@ -1133,7 +1135,8 @@ class MainWindow(QMainWindow):
     def _refresh_status(self) -> None:
         st = self.controller.status()
         self.frames_label.setText(
-            f"frames: {st['frames']}  (incomplete: {st['incomplete']})"
+            f"frames: {st['frames']}  "
+            f"(incomplete: {st['incomplete']}, dropped: {st['dropped']})"
         )
         self.led_label.setText(
             f"LED: {'ON' if st['led_state'] else 'OFF'}  ({st['led_ma']:.0f} mA)"
