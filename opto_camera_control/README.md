@@ -5,8 +5,10 @@ camera while driving a Thorlabs LED through a custom ON/OFF stimulus timeline,
 logging the LED state **per frame** so the video can be aligned with SLEAP
 pose-tracking output afterward.
 
-See [`DESIGN_NOTES.md`](DESIGN_NOTES.md) for the original hardware/design
-rationale. This README covers setup and use.
+**New to this project? Read [`GUIDE.md`](GUIDE.md)** — the complete walkthrough of
+what it does, the hardware, how the software talks to it, why it's built this
+way, and how to operate it. This README is the quick setup + reference;
+[`DESIGN_NOTES.md`](DESIGN_NOTES.md) holds the original design rationale.
 
 ## Hardware
 
