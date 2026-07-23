@@ -235,7 +235,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_preview_panel())
         layout.addWidget(self._build_camera_panel())
         layout.addWidget(self._build_stimulus_panel())
-        layout.addWidget(self._build_sync_panel())
+        # Right column: Sync & DAQ on top, Manual LED test below (separate boxes).
+        right_col = QVBoxLayout()
+        right_col.addWidget(self._build_sync_panel())
+        right_col.addWidget(self._build_led_panel())
+        right_col.addStretch()
+        right_widget = QWidget()
+        right_widget.setLayout(right_col)
+        layout.addWidget(right_widget)
 
         self.setStatusBar(QStatusBar())
         self._status_timer = QTimer(self)
@@ -893,9 +900,15 @@ class MainWindow(QMainWindow):
         device_hint.setStyleSheet("color: #888; font-style: italic;")
         form.addRow("", device_hint)
         form.addRow("BNC-2090A AO channel:", self.ao_channel)
+        return box
 
-        # --- Manual LED test (live brightness tuning) ---
-        form.addRow(QLabel("<b>Manual LED test</b> (LEDD1B in MOD mode)"))
+    # -- Manual LED test panel ----------------------------------------------
+
+    def _build_led_panel(self) -> QWidget:
+        box = QGroupBox("Manual LED test")
+        form = QFormLayout(box)
+
+        form.addRow(QLabel("Live brightness tuning (LEDD1B in MOD mode)"))
 
         # Current-limit dial value: makes the mA figures equal true LED current.
         self.current_limit = QSpinBox()
